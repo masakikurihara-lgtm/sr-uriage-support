@@ -479,6 +479,7 @@ def main():
 
 
                 # 🌟 ルーム売上のみにランク情報を付与 🌟
+                # df_mergedを「ルーム売上」データと「その他」データに分割
                 df_room_sales_only = df_merged[df_merged['データ種別'] == 'ルーム売上'].copy()
                 df_other_sales = df_merged[df_merged['データ種別'] != 'ルーム売上'].copy()
                 
@@ -486,26 +487,34 @@ def main():
                 if not df_room_sales_only.empty:
                     
                     # 1. MKランク（全体ランク）の決定
-                    # ルーム売上全体の合計額を取得 (MKsoul行の分配額を直接取得)
+                    
+                    # 【★★★ 修正箇所: 結合前の生データからMKsoulの合計額を抽出する ★★★】
+                    # df_room_sales_only (結合済み) ではなく、st.session_state.df_room_sales (取得直後) を参照する
+                    df_raw_room_sales = st.session_state.df_room_sales
                     
                     try:
-                        # fetch_and_process_dataでMKsoul行の分配額が設定されていることを前提とする
-                        mk_sales_total = df_room_sales_only[df_room_sales_only['ルームID'] == 'MKsoul']['分配額'].iloc[0].item()
+                        # df_raw_room_sales (fetch_and_process_dataの戻り値)からMKsoul行を確実に探す
+                        # .item()でPythonのintに変換
+                        mk_sales_total = df_raw_room_sales[df_raw_room_sales['ルームID'] == 'MKsoul']['分配額'].iloc[0].item() 
                         
-                        # 合計額が0の場合は、fetch_and_process_data側でエラーが発生している可能性をユーザーに伝える
-                        if mk_sales_total == 0 and 'MKsoul' in df_room_sales_only['ルームID'].values:
+                        # 合計額が0の場合の警告
+                        if mk_sales_total == 0:
                             st.warning("⚠️ MK全体分配額が0です。SHOWROOM側のデータがないか、合計金額の抽出に失敗している可能性があります。")
 
-                    except Exception:
-                        # MKsoul行がそもそも存在しない場合のフォールバック
+                    except IndexError:
+                        # MKsoul行がdf_raw_room_salesに存在しない場合の重大エラー
                         mk_sales_total = 0
-                        st.error("🚨 重大なエラー: 合計売上を示す 'MKsoul' 行が見つかりませんでした。")
-                    
+                        st.error("🚨 重大なエラー: 合計売上を示す 'MKsoul' 行がデータ取得元から見つかりませんでした。fetch_and_process_data関数での取得に失敗しています。")
+                    except Exception as e:
+                        mk_sales_total = 0
+                        st.error(f"🚨 重大なエラー: 合計売上計算中に予期せぬエラーが発生しました: {e}")
+                    # 【★★★ 修正箇所ここまで ★★★】
 
                     mk_rank_value = get_mk_rank(mk_sales_total)
                     st.info(f"🔑 **MK全体分配額**: {mk_sales_total:,}円 (→ **MKランク: {mk_rank_value}**)")
                     
-                    # 全ルーム売上行にMKランクを設定
+                    # 結合後のライバーデータ（MKsoul行を除く）にMKランクを設定
+                    # df_room_sales_onlyには、df_mergedから抽出されたライバーのルーム売上行のみが含まれている
                     df_room_sales_only['MKランク'] = mk_rank_value
                     
                     # 2. 個別ランクの決定
@@ -513,8 +522,7 @@ def main():
                     df_room_sales_only['個別ランク'] = df_room_sales_only['分配額'].apply(get_individual_rank)
                     
                     # 3. 適用料率の生成
-                    # MKランクと個別ランクを結合（例: 7C）
-                    # 'MKsoul'行は集計用なので、適用料率は'-'とする
+                    # 'MKsoul'行は集計用なので、適用料率は'-'とする (以前のコードのまま)
                     df_room_sales_only['適用料率'] = np.where(
                         df_room_sales_only['ルームID'] == 'MKsoul',
                         '-',
@@ -522,6 +530,11 @@ def main():
                     )
                 else:
                     st.warning("ルーム売上データ（「ルーム売上」データ種別）が存在しないため、ランク判定はスキップしました。")
+                    # MK全体分配額が不明なため、ランクを仮に設定 (表示用)
+                    mk_sales_total = 0 
+                    mk_rank_value = get_mk_rank(mk_sales_total) 
+                    st.info(f"🔑 **MK全体分配額**: 0円 (→ **MKランク: {mk_rank_value}**)")
+
                     df_room_sales_only['MKランク'] = np.nan
                     df_room_sales_only['個別ランク'] = np.nan
                     df_room_sales_only['適用料率'] = '-'
