@@ -128,7 +128,6 @@ def get_mk_rank(revenue):
         
 def load_target_livers(url):
     """処理対象ライバーファイルを読み込み、DataFrameとして返す"""
-    # 変更なし（省略）
     st.info(f"処理対象ライバーファイルを読み込み中... URL: {url}")
     try:
         # 1. UTF-8 with BOM (utf_8_sig) を最初に試行 (最も一般的なWeb上のCSV形式)
@@ -165,7 +164,6 @@ def load_target_livers(url):
 
 def get_target_months():
     """2023年10月以降の月リストを 'YYYY年MM月分' 形式で生成し、正確なUNIXタイムスタンプを計算する"""
-    # 変更なし（省略）
     START_YEAR = 2023
     START_MONTH = 10
     
@@ -203,7 +201,6 @@ def get_target_months():
 
 def create_authenticated_session(cookie_string):
     """手動で取得したCookie文字列から認証済みRequestsセッションを構築する"""
-    # 変更なし（省略）
     session = requests.Session()
     try:
         cookies_dict = {}
@@ -229,7 +226,6 @@ def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
     """
     指定されたタイムスタンプに基づいてSHOWROOMからデータを取得し、DataFrameに整形して返す
     """
-    # 変更なし（長いため省略、元のコードのまま）
     st.info(f"データ取得中... **{DATA_TYPES[data_type_key]['label']}** (URL: {sr_url}, タイムスタンプ: {timestamp})")
     session = create_authenticated_session(cookie_string)
     if not session:
@@ -287,6 +283,7 @@ def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
             total_amount_tag = soup.find('p', class_='fs-b4 bg-light-gray p-b3 mb-b2 link-light-green')
             total_amount_int = 0
             if total_amount_tag:
+                # 支払い金額（税抜）:<span>1,182,445</span>円 から数値を抽出
                 match = re.search(r'支払い金額（税抜）:\s*<span[^>]*>\s*([\d,]+)円', str(total_amount_tag))
                 if match:
                     total_amount_str = match.group(1).replace(',', '') 
@@ -302,10 +299,10 @@ def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
             
             if not df_cleaned.empty:
                 df_final = pd.concat([header_df, df_cleaned], ignore_index=True)
-                st.success(f"**{DATA_TYPES[data_type_key]['label']}**: ライバー個別データ ({len(df_cleaned)}件) と合計値 ({total_amount_int}) の抽出が完了しました。")
+                st.success(f"**{DATA_TYPES[data_type_key]['label']}**: ライバー個別データ ({len(df_cleaned)}件) と合計値 ({total_amount_int:,}円) の抽出が完了しました。")
             else:
                 df_final = header_df
-                st.warning(f"**{DATA_TYPES[data_type_key]['label']}**: ライバー個別のデータ行を抽出できませんでした。合計値 ({total_amount_int}) のみを含む1行データとして処理を続行します。")
+                st.warning(f"**{DATA_TYPES[data_type_key]['label']}**: ライバー個別のデータ行を抽出できませんでした。合計値 ({total_amount_int:,}円) のみを含む1行データとして処理を続行します。")
 
         else: # time_charge or premium_live
             if df_cleaned.empty:
@@ -336,7 +333,6 @@ def get_and_extract_sales_data(data_type_key, selected_timestamp, auth_cookie_st
     """
     指定されたデータタイプの売上データを取得し、セッションステートに格納する
     """
-    # 変更なし（省略）
     data_label = DATA_TYPES[data_type_key]["label"]
     sr_url = DATA_TYPES[data_type_key]["url"]
     
@@ -483,8 +479,16 @@ def main():
                 if not df_room_sales_only.empty:
                     
                     # 1. MKランク（全体ランク）の決定
-                    # ルーム売上全体の合計額を取得 (MKsoul行も含まれているため、'MKsoul'の分配額を使うのが安全)
-                    mk_sales_total = df_room_sales_only[df_room_sales_only['ルームID'] == 'MKsoul']['分配額'].sum()
+                    # ルーム売上全体の合計額を取得 (MKsoul行の分配額を直接取得)
+                    # ★★★ ここを修正しました ★★★
+                    try:
+                        # .iloc[0].item()で単一の数値を確実に取得する
+                        mk_sales_total = df_room_sales_only[df_room_sales_only['ルームID'] == 'MKsoul']['分配額'].iloc[0].item()
+                    except IndexError:
+                        # 'MKsoul'行が見つからない場合のフォールバック
+                        mk_sales_total = 0
+                        st.warning("⚠️ 'MKsoul'の合計売上行が見つからなかったため、MK全体分配額を0として計算しました。")
+
                     mk_rank_value = get_mk_rank(mk_sales_total)
                     st.info(f"🔑 **MK全体分配額**: {mk_sales_total:,}円 (→ **MKランク: {mk_rank_value}**)")
                     
