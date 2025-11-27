@@ -65,14 +65,11 @@ def get_individual_rank(sales_amount):
     """
     ルーム売上分配額（数値）から個別ランクを判定する
     """
-    # NumPyのNaNや、DataFrame結合後のNaN(float)を考慮
     if pd.isna(sales_amount) or sales_amount is None:
         return "#N/A"
     
-    # 文字列ではなく数値を受け取るように修正（DataFrame適用のため）
     amount = float(sales_amount)
     
-    # 負の値を考慮
     if amount < 0:
         return "E"
     
@@ -93,7 +90,6 @@ def get_individual_rank(sales_amount):
     elif amount >= 0:
         return "E"
     else:
-        # このパスはamount < 0で処理されるはずだが、念のため
         return "E" 
         
 
@@ -101,7 +97,6 @@ def get_mk_rank(revenue):
     """
     全体分配額合計からMKランク（1〜11）を判定する
     """
-    # 文字列でなく数値を受け取る
     if revenue <= 175000:
         return 1
     elif revenue <= 350000:
@@ -277,18 +272,32 @@ def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
         # 4. DataFrameに変換
         df_cleaned = pd.DataFrame(table_data)
         
-        # ルーム売上 (room_sales) の特殊処理: MKsoulの合計行を追加
+        # --- ルーム売上 (room_sales) の特殊処理: MKsoulの合計行を追加 ---
         if data_type_key == "room_sales":
             
-            total_amount_tag = soup.find('p', class_='fs-b4 bg-light-gray p-b3 mb-b2 link-light-green')
+            # 合計金額が表示されているタグをより幅広く検索
+            # ページ全体から「支払い金額（税抜）」というテキストを含むタグを探す
+            # 修正: class属性に依存せず、テキスト内容でタグを特定する
+            total_amount_tag = soup.find(lambda tag: tag.name == 'p' and '支払い金額（税抜）' in tag.text)
             total_amount_int = 0
+            
             if total_amount_tag:
-                # 支払い金額（税抜）:<span>1,182,445</span>円 から数値を抽出
-                match = re.search(r'支払い金額（税抜）:\s*<span[^>]*>\s*([\d,]+)円', str(total_amount_tag))
+                # タグ内のすべてのテキストから、円マークの手前にあるカンマ区切りの数字を抽出する
+                # 例: "支払い金額（税抜）：1,182,445円" から 1182445 を抽出
+                match = re.search(r'([\d,]+)円', total_amount_tag.text)
+                
                 if match:
                     total_amount_str = match.group(1).replace(',', '') 
                     if total_amount_str.isnumeric():
                         total_amount_int = int(total_amount_str)
+                        st.info(f"✅ スクレイピングによるMK全体分配額の取得に成功しました: **{total_amount_int:,}円**")
+                    else:
+                        st.error("🚨 抽出した文字列が数値に変換できませんでした。")
+                else:
+                    st.error("🚨 HTML内で「支払い金額（税抜）：[金額]円」のパターンが見つかりませんでした。")
+            else:
+                st.error("🚨 「支払い金額（税抜）」を含むタグが見つかりませんでした。")
+
 
             header_data = [{
                 'ルームID': 'MKsoul', # ルームIDは固定値
@@ -342,7 +351,6 @@ def get_and_extract_sales_data(data_type_key, selected_timestamp, auth_cookie_st
     if df_sales is not None:
         # セッションステートに格納
         st.session_state[f'df_{data_type_key}'] = df_sales
-        #st.dataframe(df_sales) # デバッグ用
     else:
         st.session_state[f'df_{data_type_key}'] = pd.DataFrame(columns=['ルームID', '分配額', 'アカウントID', 'データ種別'])
     
@@ -480,14 +488,20 @@ def main():
                     
                     # 1. MKランク（全体ランク）の決定
                     # ルーム売上全体の合計額を取得 (MKsoul行の分配額を直接取得)
-                    # ★★★ ここを修正しました ★★★
+                    # ★★★ 再修正箇所 ★★★
                     try:
-                        # .iloc[0].item()で単一の数値を確実に取得する
+                        # fetch_and_process_dataでMKsoul行の分配額が設定されていることを前提とする
                         mk_sales_total = df_room_sales_only[df_room_sales_only['ルームID'] == 'MKsoul']['分配額'].iloc[0].item()
-                    except IndexError:
-                        # 'MKsoul'行が見つからない場合のフォールバック
+                        
+                        # 合計額が0の場合は、fetch_and_process_data側でエラーが発生している可能性をユーザーに伝える
+                        if mk_sales_total == 0 and 'MKsoul' in df_room_sales_only['ルームID'].values:
+                            st.warning("⚠️ MK全体分配額が0です。SHOWROOM側のデータがないか、合計金額の抽出に失敗している可能性があります。")
+
+                    except Exception:
+                        # MKsoul行がそもそも存在しない場合のフォールバック
                         mk_sales_total = 0
-                        st.warning("⚠️ 'MKsoul'の合計売上行が見つからなかったため、MK全体分配額を0として計算しました。")
+                        st.error("🚨 重大なエラー: 合計売上を示す 'MKsoul' 行が見つかりませんでした。")
+                    # ★★★ 修正箇所ここまで ★★★
 
                     mk_rank_value = get_mk_rank(mk_sales_total)
                     st.info(f"🔑 **MK全体分配額**: {mk_sales_total:,}円 (→ **MKランク: {mk_rank_value}**)")
