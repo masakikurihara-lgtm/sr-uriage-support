@@ -59,6 +59,111 @@ except KeyError as e:
     st.stop()
 
 
+# --- 支払額計算関数 (追加・流用) ---
+
+# --- ルーム売上支払想定額計算関数 ---
+def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue):
+    """
+    個別ランク、MKランク、個別分配額から支払想定額を計算する
+    """
+    # エラーチェック
+    if individual_revenue == "#N/A" or individual_rank == "#N/A":
+        return "#N/A"
+
+    try:
+        # 入力をfloatに変換
+        individual_revenue = float(individual_revenue)
+        # 個別ランクに応じた基本レートの辞書 (mk_rank 1, 3, 5, 7, 9, 11 のキーを使用)
+        rank_rates = {
+            'D': {1: 0.750, 3: 0.755, 5: 0.760, 7: 0.765, 9: 0.770, 11: 0.775},
+            'E': {1: 0.725, 3: 0.730, 5: 0.735, 7: 0.740, 9: 0.745, 11: 0.750},
+            'C': {1: 0.775, 3: 0.780, 5: 0.785, 7: 0.790, 9: 0.795, 11: 0.800},
+            'B': {1: 0.800, 3: 0.805, 5: 0.810, 7: 0.815, 9: 0.820, 11: 0.825},
+            'A': {1: 0.825, 3: 0.830, 5: 0.835, 7: 0.840, 9: 0.845, 11: 0.850},
+            'S': {1: 0.850, 3: 0.855, 5: 0.860, 7: 0.865, 9: 0.870, 11: 0.875},
+            'SS': {1: 0.875, 3: 0.880, 5: 0.885, 7: 0.890, 9: 0.895, 11: 0.900},
+            'SSS': {1: 0.900, 3: 0.905, 5: 0.910, 7: 0.915, 9: 0.920, 11: 0.925},
+        }
+
+        # MKランクに応じてキーを決定 (1,2 -> 1, 3,4 -> 3, ...)
+        if mk_rank in [1, 2]:
+            key = 1
+        elif mk_rank in [3, 4]:
+            key = 3
+        elif mk_rank in [5, 6]:
+            key = 5
+        elif mk_rank in [7, 8]:
+            key = 7
+        elif mk_rank in [9, 10]:
+            key = 9
+        elif mk_rank == 11:
+            key = 11
+        else:
+            return "#ERROR_MK"
+
+        # 適用レートの取得
+        rate = rank_rates.get(individual_rank, {}).get(key)
+        
+        if rate is None:
+            return "#ERROR_RANK"
+
+        # 計算式の適用: ($individualRevenue * 1.08 * $rate) / 1.10 * 1.10
+        # ※ 1.10で割って1.10を掛けているため、実質 (individual_revenue * 1.08 * rate) の計算
+        payment_estimate = (individual_revenue * 1.08 * rate) 
+        
+        # 結果を小数点以下を四捨五入して整数に丸める
+        return round(payment_estimate) 
+
+    except Exception:
+        return "#ERROR_CALC"
+        
+# --- プレミアムライブ支払想定額計算関数 ---
+def calculate_paid_live_payment_estimate(paid_live_amount):
+    """
+    プレミアムライブ分配額から支払想定額を計算する
+    """
+    # プレミアムライブ分配額がない場合はNaNを返す
+    if pd.isna(paid_live_amount):
+        return np.nan
+        
+    try:
+        # 分配額を数値に変換 (Pandasのapplyで使用するため、文字列のチェックは不要)
+        individual_revenue = float(paid_live_amount)
+        
+        # 計算式の適用: ($individualRevenue * 1.00 * 1.08 * 0.9) / 1.10 * 1.10
+        # ※ 1.10で割って1.10を掛けているため、実質 (individual_revenue * 1.08 * 0.9) の計算
+        payment_estimate = (individual_revenue * 1.08 * 0.9)
+        
+        # 結果を小数点以下を四捨五入して整数に丸める
+        return round(payment_estimate)
+
+    except Exception:
+        return "#ERROR_CALC"
+
+# --- タイムチャージ支払想定額計算関数 ---
+def calculate_time_charge_payment_estimate(time_charge_amount):
+    """
+    タイムチャージ分配額から支払想定額を計算する
+    """
+    # タイムチャージ分配額がない場合はNaNを返す
+    if pd.isna(time_charge_amount):
+        return np.nan
+
+    try:
+        # 分配額を数値に変換 (Pandasのapplyで使用するため、文字列のチェックは不要)
+        individual_revenue = float(time_charge_amount)
+        
+        # 計算式の適用: ($individualRevenue * 1.08 * 1.00) / 1.10 * 1.10
+        # ※ 1.10で割って1.10を掛けているため、実質 (individual_revenue * 1.08 * 1.00) の計算
+        payment_estimate = (individual_revenue * 1.08 * 1.00)
+        
+        # 結果を小数点以下を四捨五入して整数に丸める
+        return round(payment_estimate)
+
+    except Exception:
+        return "#ERROR_CALC"
+
+
 # --- ユーティリティ関数（ランク判定ロジック） ---
 
 def get_individual_rank(sales_amount):
@@ -438,7 +543,7 @@ def main():
     
     if not st.session_state.df_room_sales.empty or 'df_livers' in st.session_state:
 
-        st.markdown("## 3. 抽出結果の確認とランク付与")
+        st.markdown("## 3. 抽出結果の確認、ランク・支払額の付与") # タイトルを修正
         st.markdown("---")
 
         if 'df_livers' in st.session_state and not st.session_state.df_livers.empty:
@@ -520,15 +625,27 @@ def main():
                     
                     # 3. 適用料率の生成
                     # 'MKsoul'行は集計用なので、適用料率は'-'とする
-                    # 【★★★ 修正箇所: ここから ↓ ★★★】
                     df_room_sales_only['適用料率'] = np.where(
                         df_room_sales_only['ルームID'] == 'MKsoul',
                         '-',
                         '適用料率：' + df_room_sales_only['MKランク'].astype(str) + df_room_sales_only['個別ランク']
                     )
-                    # 【★★★ 修正箇所: ここまで ↑ ★★★】
+                    
+                    # 4. ルーム売上支払額の計算 (個別のライバー行に対して適用)
+                    # MKsoul行（集計行）は計算対象外（NaNを適用）
+                    df_room_sales_only['支払額'] = np.where(
+                        df_room_sales_only['ルームID'] == 'MKsoul',
+                        np.nan, # MKsoul行は支払額なし
+                        df_room_sales_only.apply(
+                            lambda row: calculate_payment_estimate(
+                                row['個別ランク'], 
+                                row['MKランク'], 
+                                row['分配額']
+                            ), axis=1)
+                    )
+                    
                 else:
-                    st.warning("ルーム売上データ（「ルーム売上」データ種別）が存在しないため、ランク判定はスキップしました。")
+                    st.warning("ルーム売上データ（「ルーム売上」データ種別）が存在しないため、ランク判定・支払額計算はスキップしました。")
                     # MK全体分配額が不明なため、ランクを仮に設定 (表示用)
                     mk_sales_total = 0 
                     mk_rank_value = get_mk_rank(mk_sales_total) 
@@ -537,24 +654,51 @@ def main():
                     df_room_sales_only['MKランク'] = np.nan
                     df_room_sales_only['個別ランク'] = np.nan
                     df_room_sales_only['適用料率'] = '-'
-                    
+                    df_room_sales_only['支払額'] = np.nan # データがないので支払額もなし
+
                 
-                # 4. その他の売上行のランク列を埋める
+                # 5. その他の売上行のランク列を埋める
                 df_other_sales['MKランク'] = '-'
                 df_other_sales['個別ランク'] = '-'
                 df_other_sales['適用料率'] = '-'
 
-                # 5. 最終的なDataFrameを再結合
+                # 6. その他の売上支払額の計算
+                df_other_sales['支払額'] = np.nan # 初期化
+
+                # プレミアムライブ売上
+                premium_live_mask = df_other_sales['データ種別'] == 'プレミアムライブ売上'
+                if premium_live_mask.any():
+                    df_other_sales.loc[premium_live_mask, '支払額'] = df_other_sales[premium_live_mask]['分配額'].apply(
+                        calculate_paid_live_payment_estimate
+                    )
+
+                # タイムチャージ売上
+                time_charge_mask = df_other_sales['データ種別'] == 'タイムチャージ売上'
+                if time_charge_mask.any():
+                    df_other_sales.loc[time_charge_mask, '支払額'] = df_other_sales[time_charge_mask]['分配額'].apply(
+                        calculate_time_charge_payment_estimate
+                    )
+                
+                # 売上データがない行の支払額は0
+                no_sales_mask = df_other_sales['データ種別'] == '売上データなし'
+                df_other_sales.loc[no_sales_mask, '支払額'] = 0
+
+                # 7. 最終的なDataFrameを再結合
                 df_extracted = pd.concat([df_room_sales_only, df_other_sales], ignore_index=True)
                 
-                # 6. 不要な列を整理し、抽出が完了したDataFrameを表示 (ランク情報を追加)
-                df_extracted = df_extracted[['ルームID', 'ファイル名', 'インボイス', 'データ種別', '分配額', 'アカウントID', '配信月', '個別ランク', 'MKランク', '適用料率']]
+                # 8. 不要な列を整理し、抽出が完了したDataFrameを表示 (ランク情報を追加)
+                # 支払額列を追加
+                df_extracted = df_extracted[['ルームID', 'ファイル名', 'インボイス', 'データ種別', '分配額', '個別ランク', 'MKランク', '適用料率', '支払額', 'アカウントID', '配信月']]
                 
-                # ソートして見やすくする（オプション）
-                df_extracted = df_extracted.sort_values(by=['データ種別', 'ルームID'], ascending=[False, True]).reset_index(drop=True)
+                # 支払額列の表示形式を調整（整数としてNaN以外を扱う）
+                df_extracted['支払額'] = df_extracted['支払額'].replace(['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK'], np.nan)
+                df_extracted['支払額'] = pd.to_numeric(df_extracted['支払額'], errors='coerce').fillna(0).astype('Int64') # Int64でNaNを許容する整数型に
 
-                st.subheader("✅ 抽出・結合された最終データ (支払明細書のもと)")
-                st.info(f"このデータに、後のステップで報酬率などの計算ロジックを適用します。合計 {len(df_livers)}件のライバー情報に対して、{len(df_extracted)}件の売上明細行が紐付けられました。")
+                # ソートして見やすくする（オプション）
+                df_extracted = df_extracted.sort_values(by=['ルームID', 'データ種別'], ascending=[True, False]).reset_index(drop=True)
+
+                st.subheader("✅ 抽出・結合された最終データ (支払額計算済み)")
+                st.info(f"このデータで、分配額から**支払額**の計算が完了しました。合計 {len(df_livers)}件のライバー情報に対して、{len(df_extracted)}件の売上明細行が紐付けられました。")
                 st.dataframe(df_extracted)
                 
                 # 計算ステップのためにセッションステートに保持
