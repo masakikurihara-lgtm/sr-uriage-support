@@ -8,6 +8,7 @@ import pytz
 import logging
 from bs4 import BeautifulSoup 
 import re 
+import numpy as np # NumPyを追加
 
 # ロギング設定 (デバッグ用)
 logging.basicConfig(level=logging.INFO)
@@ -58,15 +59,79 @@ except KeyError as e:
     st.stop()
 
 
-# --- ユーティリティ関数 ---
+# --- ユーティリティ関数（ランク判定ロジック） ---
 
-@st.cache_data
+def get_individual_rank(sales_amount):
+    """
+    ルーム売上分配額（数値）から個別ランクを判定する
+    """
+    # NumPyのNaNや、DataFrame結合後のNaN(float)を考慮
+    if pd.isna(sales_amount) or sales_amount is None:
+        return "#N/A"
+    
+    # 文字列ではなく数値を受け取るように修正（DataFrame適用のため）
+    amount = float(sales_amount)
+    
+    # 負の値を考慮
+    if amount < 0:
+        return "E"
+    
+    if amount >= 900001:
+        return "SSS"
+    elif amount >= 450001:
+        return "SS"
+    elif amount >= 270001:
+        return "S"
+    elif amount >= 135001:
+        return "A"
+    elif amount >= 90001:
+        return "B"
+    elif amount >= 45001:
+        return "C"
+    elif amount >= 22501:
+        return "D"
+    elif amount >= 0:
+        return "E"
+    else:
+        # このパスはamount < 0で処理されるはずだが、念のため
+        return "E" 
+        
+
+def get_mk_rank(revenue):
+    """
+    全体分配額合計からMKランク（1〜11）を判定する
+    """
+    # 文字列でなく数値を受け取る
+    if revenue <= 175000:
+        return 1
+    elif revenue <= 350000:
+        return 2
+    elif revenue <= 525000:
+        return 3
+    elif revenue <= 700000:
+        return 4
+    elif revenue <= 875000:
+        return 5
+    elif revenue <= 1050000:
+        return 6
+    elif revenue <= 1225000:
+        return 7
+    elif revenue <= 1400000:
+        return 8
+    elif revenue <= 1575000:
+        return 9
+    elif revenue <= 1750000:
+        return 10
+    else:
+        return 11
+        
+        
 def load_target_livers(url):
     """処理対象ライバーファイルを読み込み、DataFrameとして返す"""
+    # 変更なし（省略）
     st.info(f"処理対象ライバーファイルを読み込み中... URL: {url}")
     try:
         # 1. UTF-8 with BOM (utf_8_sig) を最初に試行 (最も一般的なWeb上のCSV形式)
-        #    これにより、BOM付きUTF-8による 0xef のエラーを回避できます。
         df_livers = pd.read_csv(url, encoding='utf_8_sig')
         st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: UTF-8 BOM)")
         
@@ -83,7 +148,6 @@ def load_target_livers(url):
                 st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: Shift-JIS)")
             
             except Exception as e_final:
-                # すべて失敗した場合
                 st.error(f"🚨 処理対象ライバーファイルの読み込みに失敗しました。エンコーディングエラー: {e_final}")
                 return pd.DataFrame()
 
@@ -96,12 +160,12 @@ def load_target_livers(url):
     # ルームIDを文字列として扱い、結合キーとする
     df_livers['ルームID'] = df_livers['ルームID'].astype(str)
     
-    # 処理対象ライバーファイルの読み込みが成功した場合はここでDataFrameを返す
     return df_livers
 
 
 def get_target_months():
     """2023年10月以降の月リストを 'YYYY年MM月分' 形式で生成し、正確なUNIXタイムスタンプを計算する"""
+    # 変更なし（省略）
     START_YEAR = 2023
     START_MONTH = 10
     
@@ -139,6 +203,7 @@ def get_target_months():
 
 def create_authenticated_session(cookie_string):
     """手動で取得したCookie文字列から認証済みRequestsセッションを構築する"""
+    # 変更なし（省略）
     session = requests.Session()
     try:
         cookies_dict = {}
@@ -164,6 +229,7 @@ def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
     """
     指定されたタイムスタンプに基づいてSHOWROOMからデータを取得し、DataFrameに整形して返す
     """
+    # 変更なし（長いため省略、元のコードのまま）
     st.info(f"データ取得中... **{DATA_TYPES[data_type_key]['label']}** (URL: {sr_url}, タイムスタンプ: {timestamp})")
     session = create_authenticated_session(cookie_string)
     if not session:
@@ -191,29 +257,24 @@ def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
                 st.error("🚨 認証切れです。Cookieが古いか無効になっています。")
                 return None
             st.warning(f"**{DATA_TYPES[data_type_key]['label']}**: HTMLから売上データテーブルを検出できませんでした。データがまだ生成されていないか、ページ構造が変更されました。")
-            # データがない場合は空のDataFrameを返す (後続処理でエラーにならないように)
             return pd.DataFrame(columns=['ルームID', '分配額', 'アカウントID', 'データ種別']) 
             
         # 3. データをBeautifulSoupで抽出 (ライバー個別のデータ)
         table_data = []
         rows = table.find_all('tr')
         
-        # ヘッダー行をスキップし、データ行のみを処理
         for row in rows[1:]: 
             td_tags = row.find_all('td')
             
-            # HTML構造: [0: ルームID, 1: ルームURL, 2: ルーム名, 3: 分配額, 4: アカウントID]
             if len(td_tags) >= 5:
-                # ルームID, 分配額, アカウントIDを抽出
-                room_id_str = td_tags[0].text.strip() # 1列目のルームID (文字列)
-                amount_str = td_tags[3].text.strip().replace(',', '') # 4列目の分配額 (カンマ除去)
+                room_id_str = td_tags[0].text.strip() 
+                amount_str = td_tags[3].text.strip().replace(',', '') 
                 account_id = td_tags[4].text.strip()
                 
-                # 分配額が数値であることを確認（合計行などを除外）
                 if amount_str.isnumeric():
                     table_data.append({
-                        'ルームID': room_id_str, # ルームIDを追加
-                        '分配額': int(amount_str), # int型に変換
+                        'ルームID': room_id_str, 
+                        '分配額': int(amount_str), 
                         'アカウントID': account_id
                     })
         
@@ -240,18 +301,15 @@ def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
             header_df = pd.DataFrame(header_data)
             
             if not df_cleaned.empty:
-                 # ライバーデータが存在する場合、header_dfの後ろに連結
                 df_final = pd.concat([header_df, df_cleaned], ignore_index=True)
                 st.success(f"**{DATA_TYPES[data_type_key]['label']}**: ライバー個別データ ({len(df_cleaned)}件) と合計値 ({total_amount_int}) の抽出が完了しました。")
             else:
-                 # ライバーデータが存在しない場合、header_df（1行）のみ
                 df_final = header_df
                 st.warning(f"**{DATA_TYPES[data_type_key]['label']}**: ライバー個別のデータ行を抽出できませんでした。合計値 ({total_amount_int}) のみを含む1行データとして処理を続行します。")
 
         else: # time_charge or premium_live
             if df_cleaned.empty:
                 st.warning(f"**{DATA_TYPES[data_type_key]['label']}**: 有効なデータ行を抽出できませんでした。")
-                # ゼロ件データ用のDataFrame
                 df_final = pd.DataFrame(columns=['ルームID', '分配額', 'アカウントID']) 
             else:
                 df_final = df_cleaned
@@ -278,6 +336,7 @@ def get_and_extract_sales_data(data_type_key, selected_timestamp, auth_cookie_st
     """
     指定されたデータタイプの売上データを取得し、セッションステートに格納する
     """
+    # 変更なし（省略）
     data_label = DATA_TYPES[data_type_key]["label"]
     sr_url = DATA_TYPES[data_type_key]["url"]
     
@@ -376,7 +435,7 @@ def main():
     
     if not st.session_state.df_room_sales.empty or 'df_livers' in st.session_state:
 
-        st.markdown("## 3. 抽出結果の確認 (処理の流れ ④の結果)")
+        st.markdown("## 3. 抽出結果の確認とランク付与")
         st.markdown("---")
 
         if 'df_livers' in st.session_state and not st.session_state.df_livers.empty:
@@ -397,8 +456,7 @@ def main():
                 st.subheader("全売上データ (取得元) - 合計")
                 st.dataframe(all_sales_data, height=150)
                 
-                # ルームIDをキーに処理対象ライバーと結合 (処理の流れ ④)
-                # how='left'で、すべてのライバー情報（ルームID）を保持し、該当する売上データを付加
+                # ルームIDをキーに処理対象ライバーと結合
                 df_merged = pd.merge(
                     df_livers,
                     all_sales_data,
@@ -406,28 +464,65 @@ def main():
                     how='left'
                 )
 
-                # 🌟 新しい列の追加 🌟
-
-                # 1. 配信月
-                # 選択された月ラベルを新しい列として追加
-                df_merged['配信月'] = st.session_state.selected_month_label
-                
-                # 2. アカウントID
-                # ルーム売上 (room_sales) 以外はアカウントIDがNaNになるため、
-                # ログイン時のアカウントID (LOGIN_ID) を埋める（後続の処理で利用）
-                df_merged['アカウントID'] = df_merged['アカウントID'].fillna(st.session_state.login_account_id)
-
-
                 # 売上データがないライバー（NULL行）の分配額を0として処理
                 df_merged['分配額'] = df_merged['分配額'].fillna(0).astype(int)
                 
                 # 表示用に、売上がゼロの行のデータ種別をNaNから「売上なし」などに変換
                 df_merged['データ種別'] = df_merged['データ種別'].fillna('売上データなし')
                 
-                # 不要な列を整理し、抽出が完了したDataFrameを表示 (アカウントID, 配信月を追加)
-                df_extracted = df_merged[['ルームID', 'ファイル名', 'インボイス', 'データ種別', '分配額', 'アカウントID', '配信月']]
+                # 配信月とアカウントIDを追加
+                df_merged['配信月'] = st.session_state.selected_month_label
+                df_merged['アカウントID'] = df_merged['アカウントID'].fillna(st.session_state.login_account_id)
+
+
+                # 🌟 ルーム売上のみにランク情報を付与 🌟
+                df_room_sales_only = df_merged[df_merged['データ種別'] == 'ルーム売上'].copy()
+                df_other_sales = df_merged[df_merged['データ種別'] != 'ルーム売上'].copy()
                 
                 
+                if not df_room_sales_only.empty:
+                    
+                    # 1. MKランク（全体ランク）の決定
+                    # ルーム売上全体の合計額を取得 (MKsoul行も含まれているため、'MKsoul'の分配額を使うのが安全)
+                    mk_sales_total = df_room_sales_only[df_room_sales_only['ルームID'] == 'MKsoul']['分配額'].sum()
+                    mk_rank_value = get_mk_rank(mk_sales_total)
+                    st.info(f"🔑 **MK全体分配額**: {mk_sales_total:,}円 (→ **MKランク: {mk_rank_value}**)")
+                    
+                    # 全ルーム売上行にMKランクを設定
+                    df_room_sales_only['MKランク'] = mk_rank_value
+                    
+                    # 2. 個別ランクの決定
+                    # ルーム売上分配額に基づいて個別ランクを適用
+                    df_room_sales_only['個別ランク'] = df_room_sales_only['分配額'].apply(get_individual_rank)
+                    
+                    # 3. 適用料率の生成
+                    # MKランクと個別ランクを結合（例: 7C）
+                    # 'MKsoul'行は集計用なので、適用料率は'-'とする
+                    df_room_sales_only['適用料率'] = np.where(
+                        df_room_sales_only['ルームID'] == 'MKsoul',
+                        '-',
+                        df_room_sales_only['MKランク'].astype(str) + df_room_sales_only['個別ランク']
+                    )
+                else:
+                    st.warning("ルーム売上データ（「ルーム売上」データ種別）が存在しないため、ランク判定はスキップしました。")
+                    df_room_sales_only['MKランク'] = np.nan
+                    df_room_sales_only['個別ランク'] = np.nan
+                    df_room_sales_only['適用料率'] = '-'
+                    
+                
+                # 4. その他の売上行のランク列を埋める
+                df_other_sales['MKランク'] = '-'
+                df_other_sales['個別ランク'] = '-'
+                df_other_sales['適用料率'] = '-'
+
+                # 5. 最終的なDataFrameを再結合
+                df_extracted = pd.concat([df_room_sales_only, df_other_sales], ignore_index=True)
+                
+                # 6. 不要な列を整理し、抽出が完了したDataFrameを表示 (ランク情報を追加)
+                df_extracted = df_extracted[['ルームID', 'ファイル名', 'インボイス', 'データ種別', '分配額', 'アカウントID', '配信月', '個別ランク', 'MKランク', '適用料率']]
+                
+                # ソートして見やすくする（オプション）
+                df_extracted = df_extracted.sort_values(by=['データ種別', 'ルームID'], ascending=[False, True]).reset_index(drop=True)
 
                 st.subheader("✅ 抽出・結合された最終データ (支払明細書のもと)")
                 st.info(f"このデータに、後のステップで報酬率などの計算ロジックを適用します。合計 {len(df_livers)}件のライバー情報に対して、{len(df_extracted)}件の売上明細行が紐付けられました。")
