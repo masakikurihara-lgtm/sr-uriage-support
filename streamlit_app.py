@@ -59,12 +59,13 @@ except KeyError as e:
     st.stop()
 
 
-# --- 支払額計算関数 (追加・流用) ---
+# --- 支払額計算関数 (修正済み) ---
 
 # --- ルーム売上支払想定額計算関数 ---
 def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue):
     """
     個別ランク、MKランク、個別分配額から支払想定額を計算する
+    【修正点】最終結果を1.1で割り、税抜金額とする。
     """
     # エラーチェック
     if individual_revenue == "#N/A" or individual_rank == "#N/A":
@@ -107,9 +108,9 @@ def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue):
         if rate is None:
             return "#ERROR_RANK"
 
-        # 計算式の適用: ($individualRevenue * 1.08 * $rate) / 1.10 * 1.10
-        # ※ 1.10で割って1.10を掛けているため、実質 (individual_revenue * 1.08 * rate) の計算
-        payment_estimate = (individual_revenue * 1.08 * rate) 
+        # 修正された計算式の適用: (individual_revenue * 1.08 * rate) / 1.10
+        # ※ 元の計算式 ($individualRevenue * 1.08 * $rate) / 1.10 * 1.10 から / 1.10 の部分を残す
+        payment_estimate = (individual_revenue * 1.08 * rate) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate) 
@@ -121,6 +122,7 @@ def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue):
 def calculate_paid_live_payment_estimate(paid_live_amount):
     """
     プレミアムライブ分配額から支払想定額を計算する
+    【修正点】最終結果を1.1で割り、税抜金額とする。
     """
     # プレミアムライブ分配額がない場合はNaNを返す
     if pd.isna(paid_live_amount):
@@ -130,9 +132,9 @@ def calculate_paid_live_payment_estimate(paid_live_amount):
         # 分配額を数値に変換 (Pandasのapplyで使用するため、文字列のチェックは不要)
         individual_revenue = float(paid_live_amount)
         
-        # 計算式の適用: ($individualRevenue * 1.00 * 1.08 * 0.9) / 1.10 * 1.10
-        # ※ 1.10で割って1.10を掛けているため、実質 (individual_revenue * 1.08 * 0.9) の計算
-        payment_estimate = (individual_revenue * 1.08 * 0.9)
+        # 修正された計算式の適用: (individual_revenue * 1.08 * 0.9) / 1.10
+        # ※ 元の計算式 ($individualRevenue * 1.00 * 1.08 * 0.9) / 1.10 * 1.10 から / 1.10 の部分を残す
+        payment_estimate = (individual_revenue * 1.08 * 0.9) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate)
@@ -144,6 +146,7 @@ def calculate_paid_live_payment_estimate(paid_live_amount):
 def calculate_time_charge_payment_estimate(time_charge_amount):
     """
     タイムチャージ分配額から支払想定額を計算する
+    【修正点】最終結果を1.1で割り、税抜金額とする。
     """
     # タイムチャージ分配額がない場合はNaNを返す
     if pd.isna(time_charge_amount):
@@ -153,9 +156,9 @@ def calculate_time_charge_payment_estimate(time_charge_amount):
         # 分配額を数値に変換 (Pandasのapplyで使用するため、文字列のチェックは不要)
         individual_revenue = float(time_charge_amount)
         
-        # 計算式の適用: ($individualRevenue * 1.08 * 1.00) / 1.10 * 1.10
-        # ※ 1.10で割って1.10を掛けているため、実質 (individual_revenue * 1.08 * 1.00) の計算
-        payment_estimate = (individual_revenue * 1.08 * 1.00)
+        # 修正された計算式の適用: (individual_revenue * 1.08 * 1.00) / 1.10
+        # ※ 元の計算式 ($individualRevenue * 1.08 * 1.00) / 1.10 * 1.10 から / 1.10 の部分を残す
+        payment_estimate = (individual_revenue * 1.08 * 1.00) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate)
