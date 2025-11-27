@@ -107,12 +107,10 @@ def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue, is_
         if rate is None:
             return "#ERROR_RANK"
             
-        # ★★★ 決定的な修正: 最終防衛線としてのブール値チェック ★★★
+        # ★★★ 最終防衛線: 厳格なブール値チェック (文字列 'False' や NaN の文字列化に対応) ★★★
         is_registered = is_invoice_registered
         if not isinstance(is_registered, bool):
             # 文字列 'False', 'NaN', None などが渡された場合に、PythonでTrueとして扱われるのを防ぐ
-            # 値を文字列化し、それが空、'false', '0', 'nan', 'none' のいずれかであれば False と判定する
-            # それ以外の文字列（例: 'True', 'T88...'）は True と判定する
             is_registered = not (str(is_registered).lower().strip() in ('', 'false', '0', 'nan', 'none'))
 
 
@@ -143,7 +141,7 @@ def calculate_paid_live_payment_estimate(paid_live_amount, is_invoice_registered
         # 分配額を数値に変換 
         individual_revenue = float(paid_live_amount)
 
-        # ★★★ 決定的な修正: 最終防衛線としてのブール値チェック ★★★
+        # ★★★ 最終防衛線: 厳格なブール値チェック ★★★
         is_registered = is_invoice_registered
         if not isinstance(is_registered, bool):
             is_registered = not (str(is_registered).lower().strip() in ('', 'false', '0', 'nan', 'none'))
@@ -175,7 +173,7 @@ def calculate_time_charge_payment_estimate(time_charge_amount, is_invoice_regist
         # 分配額を数値に変換 
         individual_revenue = float(time_charge_amount)
         
-        # ★★★ 決定的な修正: 最終防衛線としてのブール値チェック ★★★
+        # ★★★ 最終防衛線: 厳格なブール値チェック ★★★
         is_registered = is_invoice_registered
         if not isinstance(is_registered, bool):
             is_registered = not (str(is_registered).lower().strip() in ('', 'false', '0', 'nan', 'none'))
@@ -289,14 +287,22 @@ def load_target_livers(url):
         st.error("🚨 処理対象ライバーファイルに必須の列 **'ルームID'** が見つかりません。")
         return pd.DataFrame()
     
-    # ★★★ 修正点2: インボイス登録判定ロジックと明示的なbool型キャストの追加 ★★★
-    # インボイス列は表示のために保持しつつ、判定用の列 'is_invoice_registered' を作成する
+    # ★★★ 決定的な修正: インボイス登録判定ロジックのバグフィックス ★★★
+    # CSVの空欄（NaN）が文字列化されて 'nan' になり、Trueと誤判定される問題を解消
     if 'インボイス' in df_livers.columns:
-        # 値が入っていればTrue (登録済み)、ブランク/NaNであればFalse (未登録)
-        # 1. 文字列化/空白除去
-        # 2. ブール値のSeriesを作成
-        # 3. 明示的に純粋なbool型にキャスト（後続処理での型変換を防ぐ）
-        df_livers['is_invoice_registered'] = df_livers['インボイス'].astype(str).str.strip().apply(lambda x: len(x) > 0).astype(bool)
+        
+        # 1. 列を文字列化し、前後の空白を除去、小文字に統一
+        s_invoice = df_livers['インボイス'].astype(str).str.strip().str.lower()
+        
+        # 2. 厳格な判定: 以下のいずれかの場合は False (非登録者) とする
+        #    - '' (空白のみのセル由来)
+        #    - 'nan' (CSVのブランクセル由来)
+        #    - 'false', '0', 'none', 'n/a' などの明示的な否定文字列
+        is_registered_series = ~s_invoice.isin(['', 'nan', 'false', '0', 'none', 'n/a'])
+        
+        # 3. 純粋なbool型としてis_invoice_registered列を作成
+        df_livers['is_invoice_registered'] = is_registered_series.astype(bool)
+
     else:
         # インボイス列がない場合は全てFalseとする
         st.warning("⚠️ 処理対象ライバーファイルに **'インボイス'** 列が見つかりません。全てのライバーを非登録者として処理します。")
@@ -597,7 +603,7 @@ def main():
             expected_cols = ['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered']
             display_cols = [col for col in expected_cols if col in df_livers.columns]
             
-            # 「インボイス」列が残るのは、ユーザー様提供のデータ源として重要であるためです。
+            # 「インボイス」列は、入力データそのものとして保持し、計算に使われる 'is_invoice_registered' (純粋なbool) と比較可能とする
             st.dataframe(df_livers[display_cols], height=150)
             
             # --- 売上データを結合して抽出 ---
@@ -634,8 +640,7 @@ def main():
                     lambda row: row['アカウントID'] if pd.notna(row['アカウントID']) else st.session_state.login_account_id if row['ルームID'] == 'MKsoul' else np.nan, axis=1
                 )
                 
-                # ★★★ 修正点3: マージ直後にis_invoice_registered列を明示的にbool型に再キャストする ★★★
-                # 最後の防御として、ここでも型を強制します。
+                # ★★★ 修正点3: マージ直後にis_invoice_registered列を明示的にbool型に再キャストする (二重の防御) ★★★
                 if 'is_invoice_registered' in df_merged.columns:
                     df_merged['is_invoice_registered'] = df_merged['is_invoice_registered'].astype(bool)
 
