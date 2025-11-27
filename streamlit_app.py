@@ -260,23 +260,35 @@ def load_target_livers(url):
                 st.error(f"🚨 処理対象ライバーファイルの読み込みに失敗しました。エンコーディングエラー: {e_final}")
                 return pd.DataFrame()
 
-    # ヘッダーを確認し、必要に応じて整形 (読み込み成功後の共通処理)
-    df_livers = df_livers.rename(columns={
-        'ルームID': 'ルームID', 
-        'ファイル名': 'ファイル名', 
-        'インボイス': 'インボイス'
-    })
+    # 読み込み成功後の共通処理
+
+    # ★★★ 修正点1: 列名から前後の空白文字を全て除去する（KeyError対策） ★★★
+    df_livers.columns = df_livers.columns.str.strip()
+
+    # ヘッダーを確認し、必要に応じて整形 (列名から空白が除去されたため、renameは不要だが、Room IDの処理は残す)
     # ルームIDを文字列として扱い、結合キーとする
-    df_livers['ルームID'] = df_livers['ルームID'].astype(str)
+    if 'ルームID' in df_livers.columns:
+        df_livers['ルームID'] = df_livers['ルームID'].astype(str)
+    else:
+        st.error("🚨 処理対象ライバーファイルに必須の列 **'ルームID'** が見つかりません。")
+        return pd.DataFrame()
     
-    # ★★★ 修正点: インボイス登録判定ロジックの追加 ★★★
+    # ★★★ 修正点2: インボイス登録判定ロジックの追加 ★★★
     # 「インボイス」の項目に値が入っているかブランクかで判定
-    # 値が入っていればTrue (登録済み)、ブランク/NaNであればFalse (未登録)
-    # .str.strip().fillna('') で、文字列として扱い、NaNを空文字列に変換し、空白を除去してから長さをチェックする
-    df_livers['is_invoice_registered'] = df_livers['インボイス'].astype(str).str.strip().apply(lambda x: len(x) > 0)
+    if 'インボイス' in df_livers.columns:
+        # 値が入っていればTrue (登録済み)、ブランク/NaNであればFalse (未登録)
+        # .str.strip().fillna('') で、文字列として扱い、NaNを空文字列に変換し、空白を除去してから長さをチェックする
+        df_livers['is_invoice_registered'] = df_livers['インボイス'].astype(str).str.strip().apply(lambda x: len(x) > 0)
+    else:
+        # インボイス列がない場合は全てFalseとする
+        st.warning("⚠️ 処理対象ライバーファイルに **'インボイス'** 列が見つかりません。全てのライバーを非登録者として処理します。")
+        df_livers['is_invoice_registered'] = False
     
     st.info(f"インボイス登録者 ({df_livers['is_invoice_registered'].sum()}名) のフラグ付けが完了しました。")
     
+    # デバッグ情報 (オプションで残しておくと便利)
+    st.info(f"デバッグ情報: 認識された列名: {df_livers.columns.tolist()}")
+
     return df_livers
 
 
@@ -534,7 +546,7 @@ def main():
         st.markdown("---")
         
         # 処理対象ライバーファイルの読み込み (処理の流れ ③)
-        # ★★★ 修正点: load_target_liversがis_invoice_registered列を持つようになる ★★★
+        # ★★★ load_target_livers関数が修正済み（列名空白除去・is_invoice_registered作成） ★★★
         df_livers = load_target_livers(TARGET_LIVER_FILE_URL)
         st.session_state['df_livers'] = df_livers # セッションステートに保存
         
@@ -568,8 +580,15 @@ def main():
         if 'df_livers' in st.session_state and not st.session_state.df_livers.empty:
             df_livers = st.session_state.df_livers
             st.subheader("処理対象ライバー一覧")
-            # is_invoice_registeredも表示に追加
-            st.dataframe(df_livers[['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered']], height=150)
+            
+            # ★★★ 修正点3: 存在しない列の参照による KeyError を防ぐため、表示列を動的に決定する ★★★
+            # 期待される列名のリスト（順番を意図）
+            expected_cols = ['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered']
+            
+            # df_liversに実際に存在する列のみをフィルタリング
+            display_cols = [col for col in expected_cols if col in df_livers.columns]
+            
+            st.dataframe(df_livers[display_cols], height=150)
             
             # --- 売上データを結合して抽出 ---
             
@@ -585,7 +604,6 @@ def main():
                 st.dataframe(all_sales_data, height=150)
                 
                 # ルームIDをキーに処理対象ライバーと結合
-                # ★★★ 修正点: is_invoice_registered列が結合される ★★★
                 df_merged = pd.merge(
                     df_livers,
                     all_sales_data,
@@ -601,7 +619,7 @@ def main():
                 
                 # 配信月とアカウントIDを追加
                 df_merged['配信月'] = st.session_state.selected_month_label
-                # ★★★ 修正点: アカウントIDが結合でNaNになった場合にログインIDを埋める（MKsoul行以外は埋める必要はないはずだが、念のため） ★★★
+                # アカウントIDが結合でNaNになった場合にログインIDを埋める（MKsoul行以外は埋める必要はないはずだが、念のため）
                 df_merged['アカウントID'] = df_merged.apply(
                     lambda row: row['アカウントID'] if pd.notna(row['アカウントID']) else st.session_state.login_account_id if row['ルームID'] == 'MKsoul' else np.nan, axis=1
                 )
@@ -720,11 +738,19 @@ def main():
                 df_extracted = pd.concat([df_room_sales_only, df_other_sales], ignore_index=True)
                 
                 # 8. 不要な列を整理し、抽出が完了したDataFrameを表示 (ランク情報を追加)
-                # 支払額列を追加
-                df_extracted = df_extracted[['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered', 'データ種別', '分配額', '個別ランク', 'MKランク', '適用料率', '支払額', 'アカウントID', '配信月']]
+                # ファイル名とインボイス列が存在する場合のみ含める
+                final_display_cols = ['ルームID']
+                if 'ファイル名' in df_livers.columns:
+                    final_display_cols.append('ファイル名')
+                if 'インボイス' in df_livers.columns:
+                    final_display_cols.append('インボイス')
+                
+                final_display_cols.extend(['is_invoice_registered', 'データ種別', '分配額', '個別ランク', 'MKランク', '適用料率', '支払額', 'アカウントID', '配信月'])
+                
+                df_extracted = df_extracted[final_display_cols]
                 
                 # 支払額列の表示形式を調整（整数としてNaN以外を扱う）
-                df_extracted['支払額'] = df_extracted['支払額'].replace(['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK'], np.nan)
+                df_extracted['支払額'] = df_extracted['支払額'].replace(['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK', '#N/A'], np.nan)
                 df_extracted['支払額'] = pd.to_numeric(df_extracted['支払額'], errors='coerce').fillna(0).astype('Int64') # Int64でNaNを許容する整数型に
 
                 # ソートして見やすくする（オプション）
