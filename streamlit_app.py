@@ -615,20 +615,22 @@ def main():
                 df_merged['アカウントID'] = df_merged.apply(
                     lambda row: row['アカウントID'] if pd.notna(row['アカウントID']) else st.session_state.login_account_id if row['ルームID'] == 'MKsoul' else np.nan, axis=1
                 )
+                
+                # ★★★ 修正点3 (最終): マージ直後にis_invoice_registered列を明示的にbool型に再キャストする ★★★
+                # これにより、以降の分割や計算で型が誤って伝播することを防ぎ、
+                # Pythonの if 文が正しく False を False として処理することを保証します。
+                if 'is_invoice_registered' in df_merged.columns:
+                    df_merged['is_invoice_registered'] = df_merged['is_invoice_registered'].astype(bool)
 
 
                 # 🌟 ルーム売上のみにランク情報を付与 🌟
                 # df_mergedを「ルーム売上」データと「その他」データに分割
+                # ※ df_mergedはここで既に正しいbool型になっている
                 df_room_sales_only = df_merged[df_merged['データ種別'] == 'ルーム売上'].copy()
                 df_other_sales = df_merged[df_merged['データ種別'] != 'ルーム売上'].copy()
                 
                 
-                # ★★★ 修正点3: 計算前にis_invoice_registered列を明示的にbool型に再キャスト ★★★
-                # これにより、Pandasの型アップキャストによる文字列'False'の混入を防ぎ、if文が正しく機能するようにする
-                if 'is_invoice_registered' in df_room_sales_only.columns:
-                    df_room_sales_only['is_invoice_registered'] = df_room_sales_only['is_invoice_registered'].astype(bool)
-                if 'is_invoice_registered' in df_other_sales.columns:
-                    df_other_sales['is_invoice_registered'] = df_other_sales['is_invoice_registered'].astype(bool)
+                # 前回の修正で入れた重複するastype(bool)は、df_mergedへの適用に一本化し削除しました。
 
 
                 if not df_room_sales_only.empty:
