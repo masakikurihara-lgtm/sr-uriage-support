@@ -59,13 +59,12 @@ except KeyError as e:
     st.stop()
 
 
-# --- 支払額計算関数 (修正済み) ---
+# --- 支払額計算関数 (修正済み: インボイスロジック追加) ---
 
 # --- ルーム売上支払想定額計算関数 ---
-def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue):
+def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue, is_invoice_registered):
     """
-    個別ランク、MKランク、個別分配額から支払想定額を計算する
-    【修正点】最終結果を1.1で割り、税抜金額とする。
+    個別ランク、MKランク、個別分配額、インボイス登録有無から支払想定額を計算する
     """
     # エラーチェック
     if individual_revenue == "#N/A" or individual_rank == "#N/A":
@@ -108,9 +107,15 @@ def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue):
         if rate is None:
             return "#ERROR_RANK"
 
-        # 修正された計算式の適用: (individual_revenue * 1.08 * rate) / 1.10
-        # ※ 元の計算式 ($individualRevenue * 1.08 * $rate) / 1.10 * 1.10 から / 1.10 の部分を残す
-        payment_estimate = (individual_revenue * 1.08 * rate) / 1.10
+        # インボイス登録有無による計算式の切り替え
+        if is_invoice_registered:
+            # インボイス登録者ロジック: (individual_revenue * 1.10 * rate) / 1.10
+            # 1.10をかけることで、SHOWROOMから分配額を**税込**とみなし、その上で料率をかけ、最後に/1.10で税抜に戻すイメージ
+            payment_estimate = (individual_revenue * 1.10 * rate) / 1.10
+        else:
+            # インボイス非登録者ロジック (既存): (individual_revenue * 1.08 * rate) / 1.10
+            # 1.08をかけることで、SHOWROOMから分配額を**税抜**とみなし、その上で料率をかけ、最後に/1.10で税抜に戻すイメージ
+            payment_estimate = (individual_revenue * 1.08 * rate) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate) 
@@ -119,10 +124,9 @@ def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue):
         return "#ERROR_CALC"
         
 # --- プレミアムライブ支払想定額計算関数 ---
-def calculate_paid_live_payment_estimate(paid_live_amount):
+def calculate_paid_live_payment_estimate(paid_live_amount, is_invoice_registered):
     """
-    プレミアムライブ分配額から支払想定額を計算する
-    【修正点】最終結果を1.1で割り、税抜金額とする。
+    プレミアムライブ分配額、インボイス登録有無から支払想定額を計算する
     """
     # プレミアムライブ分配額がない場合はNaNを返す
     if pd.isna(paid_live_amount):
@@ -132,9 +136,13 @@ def calculate_paid_live_payment_estimate(paid_live_amount):
         # 分配額を数値に変換 (Pandasのapplyで使用するため、文字列のチェックは不要)
         individual_revenue = float(paid_live_amount)
         
-        # 修正された計算式の適用: (individual_revenue * 1.08 * 0.9) / 1.10
-        # ※ 元の計算式 ($individualRevenue * 1.00 * 1.08 * 0.9) / 1.10 * 1.10 から / 1.10 の部分を残す
-        payment_estimate = (individual_revenue * 1.08 * 0.9) / 1.10
+        # インボイス登録有無による計算式の切り替え
+        if is_invoice_registered:
+            # インボイス登録者ロジック: (individual_revenue * 1.10 * 0.9) / 1.10
+            payment_estimate = (individual_revenue * 1.10 * 0.9) / 1.10
+        else:
+            # インボイス非登録者ロジック (既存): (individual_revenue * 1.08 * 0.9) / 1.10
+            payment_estimate = (individual_revenue * 1.08 * 0.9) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate)
@@ -143,10 +151,9 @@ def calculate_paid_live_payment_estimate(paid_live_amount):
         return "#ERROR_CALC"
 
 # --- タイムチャージ支払想定額計算関数 ---
-def calculate_time_charge_payment_estimate(time_charge_amount):
+def calculate_time_charge_payment_estimate(time_charge_amount, is_invoice_registered):
     """
-    タイムチャージ分配額から支払想定額を計算する
-    【修正点】最終結果を1.1で割り、税抜金額とする。
+    タイムチャージ分配額、インボイス登録有無から支払想定額を計算する
     """
     # タイムチャージ分配額がない場合はNaNを返す
     if pd.isna(time_charge_amount):
@@ -156,9 +163,13 @@ def calculate_time_charge_payment_estimate(time_charge_amount):
         # 分配額を数値に変換 (Pandasのapplyで使用するため、文字列のチェックは不要)
         individual_revenue = float(time_charge_amount)
         
-        # 修正された計算式の適用: (individual_revenue * 1.08 * 1.00) / 1.10
-        # ※ 元の計算式 ($individualRevenue * 1.08 * 1.00) / 1.10 * 1.10 から / 1.10 の部分を残す
-        payment_estimate = (individual_revenue * 1.08 * 1.00) / 1.10
+        # インボイス登録有無による計算式の切り替え
+        if is_invoice_registered:
+            # インボイス登録者ロジック: (individual_revenue * 1.10 * 1.00) / 1.10
+            payment_estimate = (individual_revenue * 1.10 * 1.00) / 1.10
+        else:
+            # インボイス非登録者ロジック (既存): (individual_revenue * 1.08 * 1.00) / 1.10
+            payment_estimate = (individual_revenue * 1.08 * 1.00) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate)
@@ -230,25 +241,21 @@ def get_mk_rank(revenue):
         
         
 def load_target_livers(url):
-    """処理対象ライバーファイルを読み込み、DataFrameとして返す"""
+    """処理対象ライバーファイルを読み込み、DataFrameとして返し、インボイスフラグを追加する"""
     st.info(f"処理対象ライバーファイルを読み込み中... URL: {url}")
+    
+    # 既存の読み込みロジック (省略せず保持)
     try:
-        # 1. UTF-8 with BOM (utf_8_sig) を最初に試行 (最も一般的なWeb上のCSV形式)
         df_livers = pd.read_csv(url, encoding='utf_8_sig')
         st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: UTF-8 BOM)")
-        
     except Exception as e_utf8:
-        # 2. UTF-8 (BOMなし) を試行
         try:
             df_livers = pd.read_csv(url, encoding='utf-8')
             st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: UTF-8)")
-        
-        # 3. 最後に Shift-JIS を試行 (従来の日本のCSV形式)
         except Exception as e_shiftjis:
             try:
                 df_livers = pd.read_csv(url, encoding='shift_jis')
                 st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: Shift-JIS)")
-            
             except Exception as e_final:
                 st.error(f"🚨 処理対象ライバーファイルの読み込みに失敗しました。エンコーディングエラー: {e_final}")
                 return pd.DataFrame()
@@ -261,6 +268,14 @@ def load_target_livers(url):
     })
     # ルームIDを文字列として扱い、結合キーとする
     df_livers['ルームID'] = df_livers['ルームID'].astype(str)
+    
+    # ★★★ 修正点: インボイス登録判定ロジックの追加 ★★★
+    # 「インボイス」の項目に値が入っているかブランクかで判定
+    # 値が入っていればTrue (登録済み)、ブランク/NaNであればFalse (未登録)
+    # .str.strip().fillna('') で、文字列として扱い、NaNを空文字列に変換し、空白を除去してから長さをチェックする
+    df_livers['is_invoice_registered'] = df_livers['インボイス'].astype(str).str.strip().apply(lambda x: len(x) > 0)
+    
+    st.info(f"インボイス登録者 ({df_livers['is_invoice_registered'].sum()}名) のフラグ付けが完了しました。")
     
     return df_livers
 
@@ -519,6 +534,7 @@ def main():
         st.markdown("---")
         
         # 処理対象ライバーファイルの読み込み (処理の流れ ③)
+        # ★★★ 修正点: load_target_liversがis_invoice_registered列を持つようになる ★★★
         df_livers = load_target_livers(TARGET_LIVER_FILE_URL)
         st.session_state['df_livers'] = df_livers # セッションステートに保存
         
@@ -552,7 +568,8 @@ def main():
         if 'df_livers' in st.session_state and not st.session_state.df_livers.empty:
             df_livers = st.session_state.df_livers
             st.subheader("処理対象ライバー一覧")
-            st.dataframe(df_livers, height=150)
+            # is_invoice_registeredも表示に追加
+            st.dataframe(df_livers[['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered']], height=150)
             
             # --- 売上データを結合して抽出 ---
             
@@ -568,6 +585,7 @@ def main():
                 st.dataframe(all_sales_data, height=150)
                 
                 # ルームIDをキーに処理対象ライバーと結合
+                # ★★★ 修正点: is_invoice_registered列が結合される ★★★
                 df_merged = pd.merge(
                     df_livers,
                     all_sales_data,
@@ -583,7 +601,10 @@ def main():
                 
                 # 配信月とアカウントIDを追加
                 df_merged['配信月'] = st.session_state.selected_month_label
-                df_merged['アカウントID'] = df_merged['アカウントID'].fillna(st.session_state.login_account_id)
+                # ★★★ 修正点: アカウントIDが結合でNaNになった場合にログインIDを埋める（MKsoul行以外は埋める必要はないはずだが、念のため） ★★★
+                df_merged['アカウントID'] = df_merged.apply(
+                    lambda row: row['アカウントID'] if pd.notna(row['アカウントID']) else st.session_state.login_account_id if row['ルームID'] == 'MKsoul' else np.nan, axis=1
+                )
 
 
                 # 🌟 ルーム売上のみにランク情報を付与 🌟
@@ -643,7 +664,8 @@ def main():
                             lambda row: calculate_payment_estimate(
                                 row['個別ランク'], 
                                 row['MKランク'], 
-                                row['分配額']
+                                row['分配額'],
+                                row['is_invoice_registered'] # ★★★ 修正点: インボイスフラグを渡す ★★★
                             ), axis=1)
                     )
                     
@@ -671,15 +693,23 @@ def main():
                 # プレミアムライブ売上
                 premium_live_mask = df_other_sales['データ種別'] == 'プレミアムライブ売上'
                 if premium_live_mask.any():
-                    df_other_sales.loc[premium_live_mask, '支払額'] = df_other_sales[premium_live_mask]['分配額'].apply(
-                        calculate_paid_live_payment_estimate
+                    # ★★★ 修正点: インボイスフラグを渡す ★★★
+                    df_other_sales.loc[premium_live_mask, '支払額'] = df_other_sales[premium_live_mask].apply(
+                        lambda row: calculate_paid_live_payment_estimate(
+                            row['分配額'],
+                            row['is_invoice_registered']
+                        ), axis=1
                     )
 
                 # タイムチャージ売上
                 time_charge_mask = df_other_sales['データ種別'] == 'タイムチャージ売上'
                 if time_charge_mask.any():
-                    df_other_sales.loc[time_charge_mask, '支払額'] = df_other_sales[time_charge_mask]['分配額'].apply(
-                        calculate_time_charge_payment_estimate
+                    # ★★★ 修正点: インボイスフラグを渡す ★★★
+                    df_other_sales.loc[time_charge_mask, '支払額'] = df_other_sales[time_charge_mask].apply(
+                        lambda row: calculate_time_charge_payment_estimate(
+                            row['分配額'],
+                            row['is_invoice_registered']
+                        ), axis=1
                     )
                 
                 # 売上データがない行の支払額は0
@@ -691,7 +721,7 @@ def main():
                 
                 # 8. 不要な列を整理し、抽出が完了したDataFrameを表示 (ランク情報を追加)
                 # 支払額列を追加
-                df_extracted = df_extracted[['ルームID', 'ファイル名', 'インボイス', 'データ種別', '分配額', '個別ランク', 'MKランク', '適用料率', '支払額', 'アカウントID', '配信月']]
+                df_extracted = df_extracted[['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered', 'データ種別', '分配額', '個別ランク', 'MKランク', '適用料率', '支払額', 'アカウントID', '配信月']]
                 
                 # 支払額列の表示形式を調整（整数としてNaN以外を扱う）
                 df_extracted['支払額'] = df_extracted['支払額'].replace(['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK'], np.nan)
