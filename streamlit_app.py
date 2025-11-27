@@ -311,6 +311,12 @@ def main():
         st.session_state['df_premium_live'] = pd.DataFrame()
     if 'df_time_charge' not in st.session_state:
         st.session_state['df_time_charge'] = pd.DataFrame()
+    
+    # 新しいセッションステートの初期化
+    if 'selected_month_label' not in st.session_state:
+        st.session_state['selected_month_label'] = None
+    if 'login_account_id' not in st.session_state:
+        st.session_state['login_account_id'] = LOGIN_ID
 
 
     # 1. 対象月選択 (処理の流れ ①)
@@ -320,7 +326,8 @@ def main():
     
     selected_label = st.selectbox(
         "処理対象の**配信月**を選択してください:",
-        options=month_labels
+        options=month_labels,
+        key='month_selector' # keyを追加し、選択を追跡
     )
     
     selected_data = next(((ts, ym) for label, ts, ym in month_options_tuple if label == selected_label), (None, None))
@@ -330,6 +337,9 @@ def main():
         st.warning("有効な月が選択されていません。")
         return
 
+    # 選択された配信月をセッションステートに保存
+    st.session_state['selected_month_label'] = selected_label
+    
     st.info(f"選択された月: **{selected_label}**")
     
     # 2. 実行ボタン (処理の流れ ②)
@@ -396,14 +406,28 @@ def main():
                     how='left'
                 )
 
+                # 🌟 新しい列の追加 🌟
+
+                # 1. 配信月
+                # 選択された月ラベルを新しい列として追加
+                df_merged['配信月'] = st.session_state.selected_month_label
+                
+                # 2. アカウントID
+                # ルーム売上 (room_sales) 以外はアカウントIDがNaNになるため、
+                # ログイン時のアカウントID (LOGIN_ID) を埋める（後続の処理で利用）
+                df_merged['アカウントID'] = df_merged['アカウントID'].fillna(st.session_state.login_account_id)
+
+
                 # 売上データがないライバー（NULL行）の分配額を0として処理
                 df_merged['分配額'] = df_merged['分配額'].fillna(0).astype(int)
                 
-                # 不要な列を整理し、抽出が完了したDataFrameを表示
-                df_extracted = df_merged[['ルームID', 'ファイル名', 'インボイス', 'データ種別', '分配額']]
-                
                 # 表示用に、売上がゼロの行のデータ種別をNaNから「売上なし」などに変換
-                df_extracted['データ種別'] = df_extracted['データ種別'].fillna('売上データなし')
+                df_merged['データ種別'] = df_merged['データ種別'].fillna('売上データなし')
+                
+                # 不要な列を整理し、抽出が完了したDataFrameを表示 (アカウントID, 配信月を追加)
+                df_extracted = df_merged[['ルームID', 'ファイル名', 'インボイス', 'データ種別', '分配額', 'アカウントID', '配信月']]
+                
+                
 
                 st.subheader("✅ 抽出・結合された最終データ (支払明細書のもと)")
                 st.info(f"このデータに、後のステップで報酬率などの計算ロジックを適用します。合計 {len(df_livers)}件のライバー情報に対して、{len(df_extracted)}件の売上明細行が紐付けられました。")
