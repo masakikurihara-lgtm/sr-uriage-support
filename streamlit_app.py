@@ -9,7 +9,6 @@ import logging
 from bs4 import BeautifulSoup 
 import re 
 import numpy as np # NumPyを追加
-from typing import List
 
 # ロギング設定 (デバッグ用)
 logging.basicConfig(level=logging.INFO)
@@ -44,9 +43,6 @@ DATA_TYPES = {
 # 処理対象ライバーファイルのURL
 TARGET_LIVER_FILE_URL = "https://mksoul-pro.com/showroom/file/shiharai-taishou.csv"
 
-# 【新規追加】売上履歴ファイルのURLベース (ファイル名は {file_name} で置換)
-SALES_HISTORY_BASE_URL = "https://mksoul-pro.com/showroom/csv/uriage_{file_name}.xlsx"
-
 # 日本のタイムゾーン
 JST = pytz.timezone('Asia/Tokyo')
 
@@ -63,7 +59,7 @@ except KeyError as e:
     st.stop()
 
 
-# --- 支払額計算関数 (既存) ---
+# --- 支払額計算関数 (修正済み: 厳密な型チェックを追加) ---
 
 # --- ルーム売上支払想定額計算関数 ---
 def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue, is_invoice_registered):
@@ -197,7 +193,7 @@ def calculate_time_charge_payment_estimate(time_charge_amount, is_invoice_regist
         return "#ERROR_CALC"
 
 
-# --- ユーティリティ関数（ランク判定ロジック） (既存) ---
+# --- ユーティリティ関数（ランク判定ロジック） ---
 
 def get_individual_rank(sales_amount):
     """
@@ -258,327 +254,262 @@ def get_mk_rank(revenue):
     else:
         return 11
         
-
-# --- 【新規】繰越処理のためのユーティリティ関数 ---
-
-def ym_to_timestamp(ym_str: str) -> int | None:
-    """
-    'YYYY/MM'形式の文字列から、その月の1日0時0分0秒のUNIXタイムスタンプを返す。
-    """
+        
+def load_target_livers(url):
+    """処理対象ライバーファイルを読み込み、DataFrameとして返し、インボイスフラグを追加する"""
+    st.info(f"処理対象ライバーファイルを読み込み中... URL: {url}")
+    
+    # 既存の読み込みロジック (省略せず保持)
     try:
-        year, month = map(int, ym_str.split('/'))
-        dt_naive = datetime(year, month, 1, 0, 0, 0)
-        dt_obj_jst = JST.localize(dt_naive, is_dst=None)
-        return int(dt_obj_jst.timestamp())
+        df_livers = pd.read_csv(url, encoding='utf_8_sig')
+        st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: UTF-8 BOM)")
+    except Exception as e_utf8:
+        try:
+            df_livers = pd.read_csv(url, encoding='utf-8')
+            st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: UTF-8)")
+        except Exception as e_shiftjis:
+            try:
+                df_livers = pd.read_csv(url, encoding='shift_jis')
+                st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: Shift-JIS)")
+            except Exception as e_final:
+                st.error(f"🚨 処理対象ライバーファイルの読み込みに失敗しました。エンコーディングエラー: {e_final}")
+                return pd.DataFrame()
+
+    # 読み込み成功後の共通処理
+
+    # ★★★ 修正点1: 列名から前後の空白文字を全て除去する（KeyError対策） ★★★
+    df_livers.columns = df_livers.columns.str.strip()
+
+    # ルームIDを文字列として扱い、結合キーとする
+    if 'ルームID' in df_livers.columns:
+        df_livers['ルームID'] = df_livers['ルームID'].astype(str)
+    else:
+        st.error("🚨 処理対象ライバーファイルに必須の列 **'ルームID'** が見つかりません。")
+        return pd.DataFrame()
+    
+    # ★★★ 決定的な修正: インボイス登録判定ロジックのバグフィックス ★★★
+    # CSVの空欄（NaN）が文字列化されて 'nan' になり、Trueと誤判定される問題を解消
+    if 'インボイス' in df_livers.columns:
+        
+        # 1. 列を文字列化し、前後の空白を除去、小文字に統一
+        s_invoice = df_livers['インボイス'].astype(str).str.strip().str.lower()
+        
+        # 2. 厳格な判定: 以下のいずれかの場合は False (非登録者) とする
+        #    - '' (空白のみのセル由来)
+        #    - 'nan' (CSVのブランクセル由来)
+        #    - 'false', '0', 'none', 'n/a' などの明示的な否定文字列
+        is_registered_series = ~s_invoice.isin(['', 'nan', 'false', '0', 'none', 'n/a'])
+        
+        # 3. 純粋なbool型としてis_invoice_registered列を作成
+        df_livers['is_invoice_registered'] = is_registered_series.astype(bool)
+
+    else:
+        # インボイス列がない場合は全てFalseとする
+        st.warning("⚠️ 処理対象ライバーファイルに **'インボイス'** 列が見つかりません。全てのライバーを非登録者として処理します。")
+        df_livers['is_invoice_registered'] = False
+    
+    st.info(f"インボイス登録者 ({df_livers['is_invoice_registered'].sum()}名) のフラグ付けが完了しました。")
+    
+    return df_livers
+
+
+def get_target_months():
+    """2023年10月以降の月リストを 'YYYY年MM月分' 形式で生成し、正確なUNIXタイムスタンプを計算する"""
+    START_YEAR = 2023
+    START_MONTH = 10
+    
+    today = datetime.now(JST)
+    months = []
+    
+    current_year = today.year
+    current_month = today.month
+    
+    while True:
+        if current_year < START_YEAR or (current_year == START_YEAR and current_month < START_MONTH):
+            break 
+
+        month_str = f"{current_year}年{current_month:02d}月分"
+        
+        try:
+            dt_naive = datetime(current_year, current_month, 1, 0, 0, 0)
+            dt_obj_jst = JST.localize(dt_naive, is_dst=None)
+            timestamp = int(dt_obj_jst.timestamp())
+            ym_str = f"{current_year}{current_month:02d}"
+            
+            months.append((month_str, timestamp, ym_str)) # (ラベル, UNIXタイムスタンプ, YYYYMM)
+        except Exception as e:
+            logging.error(f"日付計算エラー ({month_str}): {e}")
+            
+        # 次の月（前の月）へ移動
+        if current_month == 1:
+            current_month = 12
+            current_year -= 1
+        else:
+            current_month -= 1
+            
+    return months
+
+
+def create_authenticated_session(cookie_string):
+    """手動で取得したCookie文字列から認証済みRequestsセッションを構築する"""
+    session = requests.Session()
+    try:
+        cookies_dict = {}
+        for item in cookie_string.split(';'):
+            item = item.strip()
+            if '=' in item:
+                name, value = item.split('=', 1)
+                cookies_dict[name.strip()] = value.strip()
+        cookies_dict['i18n_redirected'] = 'ja'
+        session.cookies.update(cookies_dict)
+        
+        if not cookies_dict:
+            st.error("🚨 有効な認証セッションを解析できませんでした。")
+            return None
+            
+        return session
     except Exception as e:
-        logging.error(f"YYYY/MMからタイムスタンプへの変換エラー ({ym_str}): {e}")
+        st.error(f"認証セッションを解析中にエラーが発生しました: {e}")
         return None
 
 
-def load_liver_sales_history(file_name: str) -> pd.DataFrame:
+def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
     """
-    ライバーのファイル名に基づき、売上履歴ファイルを読み込み、DataFrameを返す。
-    .xlsxを試み、失敗したら.csvも試みる（ユーザーの提供ファイルに合わせた柔軟な処理）。
+    指定されたタイムスタンプに基づいてSHOWROOMからデータを取得し、DataFrameに整形して返す
     """
-    # ユーザー指示に基づきURLを生成（.xlsx形式をベースとする）
-    base_url = SALES_HISTORY_BASE_URL.replace("{file_name}", file_name)
+    st.info(f"データ取得中... **{DATA_TYPES[data_type_key]['label']}** (URL: {sr_url}, タイムスタンプ: {timestamp})")
+    session = create_authenticated_session(cookie_string)
+    if not session:
+        return None
     
-    st.info(f"ライバー履歴ファイル読み込み中... URL: {base_url}")
-    
-    # 1. .xlsx (Excel) としての読み込みを試みる
     try:
-        df_history = pd.read_excel(base_url, engine='openpyxl')
-        st.success(f"履歴ファイル ({file_name}) の読み込みが完了しました (Excel形式)。")
-    except Exception as e_excel:
-        logging.warning(f"⚠️ Excel形式での読み込みに失敗。CSV形式を試行します。エラー: {e_excel}")
-        # 2. .xlsxを.csvに置換してCSVとしての読み込みを試みる (ユーザー提供ファイル形式に合わせる)
-        try:
-            csv_url = base_url.replace(".xlsx", ".csv")
-            df_history = pd.read_csv(csv_url, encoding='utf_8_sig', header=0)
-            st.success(f"履歴ファイル ({file_name}) の読み込みが完了しました (CSV形式)。")
-        except Exception as e_csv:
-            st.warning(f"⚠️ 履歴ファイル ({file_name}) の読み込みに失敗しました (エラー: {e_csv})。このライバーの繰越処理はスキップします。")
-            return pd.DataFrame()
-
-    # 読み込み成功後の共通処理
-    
-    # 列名から不要な改行や空白を除去
-    df_history.columns = df_history.columns.str.replace('\n', ' ').str.strip()
-    
-    # 必須列の確認
-    required_cols = ['配信月', '支払/繰越']
-    for col in required_cols:
-        if col not in df_history.columns:
-            st.error(f"🚨 履歴ファイル ({file_name}) に必須の列 **'{col}'** が見つかりません。")
-            return pd.DataFrame()
-
-    # 配信月を文字列に統一
-    df_history['配信月'] = df_history['配信月'].astype(str).str.strip()
-
-    return df_history
-
-
-def get_carryover_months(df_history: pd.DataFrame, selected_month_label: str) -> List[str]:
-    """
-    履歴DataFrameから、選択された配信月（'YYYY年MM月分'）の直前の「繰越」となっている月を遡って取得する。
-    戻り値は 'YYYY/MM' 形式のリスト。
-    """
-    # '2025年10月分' -> '2025/10' に変換
-    target_ym = selected_month_label.replace('年', '/').replace('月分', '').strip()
-    
-    carryover_months = []
-    
-    # 1. 選択された月 (target_ym) の行を見つける
-    target_row = df_history[df_history['配信月'] == target_ym]
-    
-    if target_row.empty:
-        st.warning(f"履歴ファイルに選択された配信月 **{target_ym}** の行が見つかりません。")
-        return []
-
-    # 2. 選択された月のインデックスを取得
-    target_index = target_row.index[0]
-    
-    # 3. 選択された月の次の行（時間的に前の月）から順に「繰越」を探す
-    # target_index + 1 から末尾までをループ
-    for index in range(target_index + 1, len(df_history)):
-        row = df_history.iloc[index]
+        # 1. データ取得
+        url = f"{sr_url}?from={timestamp}" 
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+            'Referer': sr_url
+        }
         
-        payment_status = row.get('支払/繰越', '').strip()
-        distribution_month = row.get('配信月', '').strip()
+        response = session.get(url, headers=headers, timeout=30)
+        response.raise_for_status() 
         
-        if payment_status == '繰越':
-            carryover_months.append(distribution_month)
-            # 繰越が続く限り追加
-        elif payment_status == '支払':
-            # 「支払」を見つけたら、そこで遡り処理を終了
-            break
+        # 2. HTMLからのデータ抽出
+        soup = BeautifulSoup(response.text, 'html5lib') 
+        table = soup.find('table', class_='table-type-02') 
         
-    if carryover_months:
-        st.info(f"🔑 繰越対象月が見つかりました: **{', '.join(carryover_months)}**")
-    # 繰越がない場合は、何も表示しない
-        
-    return carryover_months
-
-# --- 既存の load_target_livers, get_target_months, create_authenticated_session, fetch_and_process_data, get_and_extract_sales_data は省略 ---
-# ※ 既存のコードはそのまま
-
-# --- 【新規】繰越処理を実行し、結果を最終データに結合する関数 ---
-
-def get_carryover_data_for_liver(liver_row: pd.Series, selected_month_label: str, auth_cookie_string: str) -> List[pd.DataFrame]:
-    """
-    特定のライバーの繰越月を判定し、該当する月のデータをSHOWROOMから取得・計算してDataFrameのリストを返す。
-    """
-    file_name = liver_row['ファイル名']
-    room_id = liver_row['ルームID']
-    st.markdown(f"##### 🚀 ルームID: {room_id} ({file_name}) の繰越処理を開始")
-
-    # 1. ライバーの売上履歴ファイルを読み込む
-    df_history = load_liver_sales_history(file_name)
-    
-    if df_history.empty:
-        return []
-
-    # 2. 繰越となっている月を遡って特定する (YYYY/MM のリスト)
-    carryover_months_ym = get_carryover_months(df_history, selected_month_label)
-    
-    if not carryover_months_ym:
-        st.info(f"ルームID: {room_id} には繰越データがありませんでした。")
-        return []
-    
-    # 3. 繰越月のデータをSHOWROOMから取得・計算する
-    all_carryover_dfs = []
-    
-    # 取得する必要があるのは、特定された「繰越」の月のデータ
-    for ym_str in carryover_months_ym:
-        st.markdown(f"###### ⏳ 繰越データ取得中: 配信月 **{ym_str}**")
-        
-        # YYYY/MM -> UNIXタイムスタンプに変換
-        target_timestamp = ym_to_timestamp(ym_str)
-        if target_timestamp is None:
-            continue
-        
-        # 配信月ラベルを生成 (例: '2025年09月分')
-        carryover_month_label = ym_str.replace('/', '年') + '月分'
-        
-        # --- SHOWROOM売上データの取得と計算 ---
-        
-        df_sales_list = []
-        df_mk_sales = pd.DataFrame()
-        
-        # 1. SHOWROOM売上データの取得 (この月分のMK全体分配額を取得するため、ルーム売上を最初に処理)
-        for data_type_key in DATA_TYPES.keys():
-            sr_url = DATA_TYPES[data_type_key]["url"]
-            df_sales = fetch_and_process_data(target_timestamp, auth_cookie_string, sr_url, data_type_key)
+        if not table:
+            if "ログイン" in response.text or "会員登録" in response.text:
+                st.error("🚨 認証切れです。Cookieが古いか無効になっています。")
+                return None
+            st.warning(f"**{DATA_TYPES[data_type_key]['label']}**: HTMLから売上データテーブルを検出できませんでした。データがまだ生成されていないか、ページ構造が変更されました。")
+            return pd.DataFrame(columns=['ルームID', '分配額', 'アカウントID', 'データ種別']) 
             
-            if df_sales is not None and not df_sales.empty:
-                # MKsoul行を分離して、残りをdf_sales_listに追加
-                if data_type_key == "room_sales":
-                    df_mk_sales = df_sales[df_sales['ルームID'] == 'MKsoul'].copy()
-                    df_sales = df_sales[df_sales['ルームID'] != 'MKsoul'].copy()
+        # 3. データをBeautifulSoupで抽出 (ライバー個別のデータ)
+        table_data = []
+        rows = table.find_all('tr')
+        
+        for row in rows[1:]: 
+            td_tags = row.find_all('td')
+            
+            if len(td_tags) >= 5:
+                room_id_str = td_tags[0].text.strip() 
+                amount_str = td_tags[3].text.strip().replace(',', '') 
+                account_id = td_tags[4].text.strip()
                 
-                if not df_sales.empty:
-                    df_sales_list.append(df_sales)
+                if amount_str.isnumeric():
+                    table_data.append({
+                        'ルームID': room_id_str, 
+                        '分配額': int(amount_str), 
+                        'アカウントID': account_id
+                    })
         
-        if not df_sales_list:
-            st.warning(f"⚠️ {carryover_month_label} の売上データがSHOWROOMから取得できませんでした。")
-            continue
+        # 4. DataFrameに変換
+        df_cleaned = pd.DataFrame(table_data)
+        
+        # --- ルーム売上 (room_sales) の特殊処理: MKsoulの合計行を追加 ---
+        if data_type_key == "room_sales":
             
-        all_sales_data = pd.concat(df_sales_list)
-        
-        # 2. 処理対象ライバー（この関数に渡された単一行）と売上データを結合・計算
-        # 処理対象ライバーは単一行だが、処理を簡潔にするためDataFrameにする
-        df_liver_single = pd.DataFrame([liver_row])
-        df_liver_single['ルームID'] = df_liver_single['ルームID'].astype(str) # 念のため型を合わせる
-
-        # ルームIDをキーに処理対象ライバーと結合 (ルームIDが一致する行のみを抽出)
-        df_merged_carryover = pd.merge(
-            df_liver_single, # 1行のライバー情報
-            all_sales_data,  # その月の全売上データ
-            on='ルームID',
-            how='left'
-        )
-        
-        # 念の為、'ファイル名'列がない場合は追加（後の処理で必要になるため）
-        if 'ファイル名' not in df_merged_carryover.columns and 'ファイル名' in df_liver_single.columns:
-             df_merged_carryover.insert(1, 'ファイル名', df_liver_single.iloc[0]['ファイル名'])
-        
-        # 'インボイス'、'is_invoice_registered'列が欠落するのを防ぐ
-        for col in ['インボイス', 'is_invoice_registered']:
-             if col not in df_merged_carryover.columns and col in df_liver_single.columns:
-                 df_merged_carryover[col] = df_liver_single.iloc[0][col]
-
-        # 売上データがないライバー（NULL行）の分配額を0として処理
-        df_merged_carryover['分配額'] = df_merged_carryover['分配額'].fillna(0).astype(int)
-        df_merged_carryover['データ種別'] = df_merged_carryover['データ種別'].fillna('売上データなし')
-        df_merged_carryover['配信月'] = carryover_month_label
-        df_merged_carryover['アカウントID'] = df_merged_carryover['アカウントID'].fillna(st.session_state.login_account_id)
-        
-        if 'is_invoice_registered' in df_merged_carryover.columns:
-            df_merged_carryover['is_invoice_registered'] = df_merged_carryover['is_invoice_registered'].astype(bool)
-
-
-        # 3. ランク・支払額の計算
-
-        df_room_sales_only = df_merged_carryover[df_merged_carryover['データ種別'] == 'ルーム売上'].copy()
-        df_other_sales = df_merged_carryover[df_merged_carryover['データ種別'] != 'ルーム売上'].copy()
-        
-        # 3-1. ルーム売上処理
-        if not df_room_sales_only.empty:
+            # 修正: class属性と正規表現をご提示のパターンに合わせる
+            total_amount_tag = soup.find('p', class_='fs-b4 bg-light-gray p-b3 mb-b2 link-light-green')
+            total_amount_int = 0
             
-            # MKランクの決定: 取得したMKsoulの分配額から計算
-            mk_sales_total = df_mk_sales['分配額'].iloc[0].item() if not df_mk_sales.empty else 0
-            mk_rank_value = get_mk_rank(mk_sales_total)
+            if total_amount_tag:
+                # <span>タグ内を検索して、支払い金額（税抜）を抽出
+                match = re.search(r'支払い金額（税抜）:\s*<span[^>]*>\s*([\d,]+)円', str(total_amount_tag))
+                
+                if match:
+                    total_amount_str = match.group(1).replace(',', '') 
+                    if total_amount_str.isnumeric():
+                        total_amount_int = int(total_amount_str)
+                        st.info(f"✅ スクレイピングによるMK全体分配額の取得に成功しました: **{total_amount_int:,}円**")
+                    else:
+                        st.error("🚨 抽出した文字列が数値に変換できませんでした。")
+                else:
+                    st.error("🚨 HTMLの指定タグ内で「支払い金額（税抜）：[金額]円」のパターンが見つかりませんでした。")
+            else:
+                st.error("🚨 合計金額を示すタグ (`p` class='fs-b4...') がHTML内に見つかりませんでした。")
+
+
+            header_data = [{
+                'ルームID': 'MKsoul', # ルームIDは固定値
+                '分配額': total_amount_int,
+                'アカウントID': LOGIN_ID # secretsから取得したログインID
+            }]
+            header_df = pd.DataFrame(header_data)
             
-            df_room_sales_only['MKランク'] = mk_rank_value
-            df_room_sales_only['個別ランク'] = df_room_sales_only['分配額'].apply(get_individual_rank)
-            df_room_sales_only['適用料率'] = '適用料率：' + df_room_sales_only['MKランク'].astype(str) + df_room_sales_only['個別ランク']
-            
-            df_room_sales_only['支払額'] = df_room_sales_only.apply(
-                lambda row: calculate_payment_estimate(
-                    row['個別ランク'],
-                    row['MKランク'],
-                    row['分配額'],
-                    row['is_invoice_registered']
-                ), axis=1)
+            if not df_cleaned.empty:
+                df_final = pd.concat([header_df, df_cleaned], ignore_index=True)
+                st.success(f"**{DATA_TYPES[data_type_key]['label']}**: ライバー個別データ ({len(df_cleaned)}件) と合計値 ({total_amount_int:,}円) の抽出が完了しました。")
+            else:
+                df_final = header_df
+                st.warning(f"**{DATA_TYPES[data_type_key]['label']}**: ライバー個別のデータ行を抽出できませんでした。合計値 ({total_amount_int:,}円) のみを含む1行データとして処理を続行します。")
 
-        else:
-            df_room_sales_only['MKランク'] = np.nan
-            df_room_sales_only['個別ランク'] = np.nan
-            df_room_sales_only['適用料率'] = '-'
-            df_room_sales_only['支払額'] = np.nan
+        else: # time_charge or premium_live
+            if df_cleaned.empty:
+                st.warning(f"**{DATA_TYPES[data_type_key]['label']}**: 有効なデータ行を抽出できませんでした。")
+                df_final = pd.DataFrame(columns=['ルームID', '分配額', 'アカウントID']) 
+            else:
+                df_final = df_cleaned
+                st.success(f"**{DATA_TYPES[data_type_key]['label']}**: データ ({len(df_final)}件) の抽出が完了しました。")
 
-
-        # 3-2. その他売上処理
-        df_other_sales['MKランク'] = '-'
-        df_other_sales['個別ランク'] = '-'
-        df_other_sales['適用料率'] = '-'
-        df_other_sales['支払額'] = np.nan # 初期化
-
-        # プレミアムライブ売上
-        premium_live_mask = df_other_sales['データ種別'] == 'プレミアムライブ売上'
-        if premium_live_mask.any():
-            df_other_sales.loc[premium_live_mask, '支払額'] = df_other_sales[premium_live_mask].apply(
-                lambda row: calculate_paid_live_payment_estimate(row['分配額'], row['is_invoice_registered']), axis=1
-            )
-
-        # タイムチャージ売上
-        time_charge_mask = df_other_sales['データ種別'] == 'タイムチャージ売上'
-        if time_charge_mask.any():
-            df_other_sales.loc[time_charge_mask, '支払額'] = df_other_sales[time_charge_mask].apply(
-                lambda row: calculate_time_charge_payment_estimate(row['分配額'], row['is_invoice_registered']), axis=1
-            )
-            
-        # 売上データがない行の支払額は0
-        no_sales_mask = df_other_sales['データ種別'] == '売上データなし'
-        df_other_sales.loc[no_sales_mask, '支払額'] = 0
-
-        # 4. 最終的なDataFrameを再結合して整形
-        df_final = pd.concat([df_room_sales_only, df_other_sales], ignore_index=True)
+        # 5. データ種別列を追加
+        df_final['データ種別'] = DATA_TYPES[data_type_key]['label']
         
-        # 支払額列の表示形式を調整（整数としてNaN以外を扱う）
-        df_final['支払額'] = df_final['支払額'].replace(['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK', '#N/A'], np.nan)
-        df_final['支払額'] = pd.to_numeric(df_final['支払額'], errors='coerce').fillna(0).astype('Int64')
-
-        if not df_final.empty:
-            all_carryover_dfs.append(df_final)
+        # ルームIDを結合キーとして文字列に統一
+        df_final['ルームID'] = df_final['ルームID'].astype(str)
         
-        st.success(f"✅ {carryover_month_label} の繰越データの取得・計算が完了しました。")
+        return df_final
+        
+    except requests.exceptions.HTTPError as e:
+        st.error(f"HTTPエラーが発生しました: {e.response.status_code}. 認証Cookieが無効になっている可能性があります。")
+        return None
+    except Exception as e:
+        st.error(f"予期せぬエラーが発生しました: {e}")
+        logging.error("データ取得・整形エラー", exc_info=True)
+        return None
 
-    return all_carryover_dfs
 
-
-def append_carryover_data(df_extracted_initial: pd.DataFrame, df_livers: pd.DataFrame, selected_month_label: str, auth_cookie_string: str) -> pd.DataFrame:
+def get_and_extract_sales_data(data_type_key, selected_timestamp, auth_cookie_string):
     """
-    主要な繰越処理を実行する関数。単月処理後のデータフレームを受け取り、繰越データを追記して返す。
+    指定されたデータタイプの売上データを取得し、セッションステートに格納する
     """
-    st.markdown("---")
-    st.markdown("## 4. 繰越データの探索と追加 (新規処理)")
+    data_label = DATA_TYPES[data_type_key]["label"]
+    sr_url = DATA_TYPES[data_type_key]["url"]
     
-    # MKsoul行は処理対象外
-    df_livers_target = df_livers[df_livers['ルームID'] != 'MKsoul'].copy()
+    # 1. データ取得と整形
+    df_sales = fetch_and_process_data(selected_timestamp, auth_cookie_string, sr_url, data_type_key)
     
-    if df_livers_target.empty:
-        st.warning("処理対象ライバーが見つからなかったため、繰越処理は実行しません。")
-        return df_extracted_initial
-
-    all_carryover_data = []
-
-    # 処理対象ライバーを1人ずつループ
-    for index, liver_row in df_livers_target.iterrows():
-        
-        # 繰越データを取得・計算
-        dfs_carryover = get_carryover_data_for_liver(liver_row, selected_month_label, auth_cookie_string)
-        
-        if dfs_carryover:
-            all_carryover_data.extend(dfs_carryover)
-
-    if all_carryover_data:
-        # 繰越データを全て結合
-        df_carryover_final = pd.concat(all_carryover_data, ignore_index=True)
-        
-        # 最終的な単月データと繰越データを結合（行を追加）
-        df_final_combined = pd.concat([df_extracted_initial, df_carryover_final], ignore_index=True)
-        
-        # ソートして見やすくする（オプション）
-        df_final_combined = df_final_combined.sort_values(by=['ルームID', '配信月', 'データ種別'], ascending=[True, False, False]).reset_index(drop=True)
-        
-        # 最終的な支払額の型を整える
-        df_final_combined['支払額'] = pd.to_numeric(df_final_combined['支払額'], errors='coerce').fillna(0).astype('Int64')
-
-        st.success(f"🎉 繰越データ ({len(df_carryover_final)}行) の取得・追加が完了しました。")
-        
-        st.subheader("✅ 抽出・結合された最終データ（繰越データ含む）")
-        st.dataframe(df_final_combined)
-        
-        return df_final_combined
-
+    if df_sales is not None:
+        # セッションステートに格納
+        st.session_state[f'df_{data_type_key}'] = df_sales
     else:
-        st.info("すべての処理対象ライバーについて、繰越データは見つかりませんでした。")
-        st.subheader("✅ 抽出・結合された最終データ（繰越データなし）")
-        st.dataframe(df_extracted_initial)
-        return df_extracted_initial
+        st.session_state[f'df_{data_type_key}'] = pd.DataFrame(columns=['ルームID', '分配額', 'アカウントID', 'データ種別'])
+    
+    st.markdown("---")
 
-# --- Streamlit UI (既存) ---
+# --- Streamlit UI ---
 
 def main():
     st.set_page_config(page_title="SHOWROOM 支払明細書作成補助ツール", layout="wide")
@@ -604,7 +535,7 @@ def main():
         st.session_state['login_account_id'] = LOGIN_ID
 
 
-    # 1. 対象月選択
+    # 1. 対象月選択 (処理の流れ ①)
     st.markdown("#### 1. 対象月選択")
     month_options_tuple = get_target_months()
     month_labels = [label for label, _, _ in month_options_tuple] 
@@ -627,13 +558,13 @@ def main():
     
     st.info(f"選択された月: **{selected_label}**")
     
-    # 2. 実行ボタン
+    # 2. 実行ボタン (処理の流れ ②)
     st.markdown("#### 2. データ取得と抽出の実行")
     
     if st.button("🚀 データの取得・抽出を実行", type="primary"):
         st.markdown("---")
         
-        # 処理対象ライバーファイルの読み込み
+        # 処理対象ライバーファイルの読み込み (処理の流れ ③)
         df_livers = load_target_livers(TARGET_LIVER_FILE_URL)
         st.session_state['df_livers'] = df_livers # セッションステートに保存
         
@@ -643,7 +574,7 @@ def main():
             
         with st.spinner(f"処理中: {selected_label}の売上データをSHOWROOMから取得しています..."):
             
-            # --- SHOWROOM売上データの取得 (単月処理: 既存ロジック) ---
+            # --- SHOWROOM売上データの取得 (処理の流れ ④) ---
             
             # ルーム売上
             get_and_extract_sales_data("room_sales", selected_timestamp, AUTH_COOKIE_STRING)
@@ -668,12 +599,14 @@ def main():
             df_livers = st.session_state.df_livers
             st.subheader("処理対象ライバー一覧")
             
+            # 存在しない列の参照による KeyError を防ぐため、表示列を動的に決定する
             expected_cols = ['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered']
             display_cols = [col for col in expected_cols if col in df_livers.columns]
             
+            # 「インボイス」列は、入力データそのものとして保持し、計算に使われる 'is_invoice_registered' (純粋なbool) と比較可能とする
             st.dataframe(df_livers[display_cols], height=150)
             
-            # --- 売上データを結合して抽出 (単月処理の実行) ---
+            # --- 売上データを結合して抽出 ---
             
             # 取得した売上データを結合
             all_sales_data = pd.concat([
@@ -806,7 +739,7 @@ def main():
                 df_other_sales.loc[no_sales_mask, '支払額'] = 0
 
                 # 7. 最終的なDataFrameを再結合
-                df_extracted_single_month = pd.concat([df_room_sales_only, df_other_sales], ignore_index=True)
+                df_extracted = pd.concat([df_room_sales_only, df_other_sales], ignore_index=True)
                 
                 # 8. 不要な列を整理し、抽出が完了したDataFrameを表示 (ランク情報を追加)
                 final_display_cols = ['ルームID']
@@ -815,37 +748,29 @@ def main():
                 if 'インボイス' in df_livers.columns:
                     final_display_cols.append('インボイス')
                 
+                # is_invoice_registered列は、計算に使われた「真のブール値」を示すため、表示列に残します
                 final_display_cols.extend(['is_invoice_registered', 'データ種別', '分配額', '個別ランク', 'MKランク', '適用料率', '支払額', 'アカウントID', '配信月'])
                 
                 # DataFrameに存在しない列を除外
-                df_extracted_cols = [col for col in final_display_cols if col in df_extracted_single_month.columns]
-                df_extracted_single_month = df_extracted_single_month[df_extracted_cols]
+                df_extracted_cols = [col for col in final_display_cols if col in df_extracted.columns]
+                df_extracted = df_extracted[df_extracted_cols]
                 
                 # 支払額列の表示形式を調整（整数としてNaN以外を扱う）
-                df_extracted_single_month['支払額'] = df_extracted_single_month['支払額'].replace(['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK', '#N/A'], np.nan)
-                df_extracted_single_month['支払額'] = pd.to_numeric(df_extracted_single_month['支払額'], errors='coerce').fillna(0).astype('Int64') # Int64でNaNを許容する整数型に
+                df_extracted['支払額'] = df_extracted['支払額'].replace(['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK', '#N/A'], np.nan)
+                df_extracted['支払額'] = pd.to_numeric(df_extracted['支払額'], errors='coerce').fillna(0).astype('Int64') # Int64でNaNを許容する整数型に
 
                 # ソートして見やすくする（オプション）
-                df_extracted_single_month = df_extracted_single_month.sort_values(by=['ルームID', 'データ種別'], ascending=[True, False]).reset_index(drop=True)
+                df_extracted = df_extracted.sort_values(by=['ルームID', 'データ種別'], ascending=[True, False]).reset_index(drop=True)
 
-                st.subheader("✅ 抽出・結合された最終データ (単月処理完了)")
-                st.info(f"このデータで、分配額から**支払額**の計算が完了しました。合計 {len(df_livers)}件のライバー情報に対して、{len(df_extracted_single_month)}件の売上明細行が紐付けられました。")
-                st.dataframe(df_extracted_single_month)
+                st.subheader("✅ 抽出・結合された最終データ (支払額計算済み)")
+                st.info(f"このデータで、分配額から**支払額**の計算が完了しました。合計 {len(df_livers)}件のライバー情報に対して、{len(df_extracted)}件の売上明細行が紐付けられました。")
+                st.dataframe(df_extracted)
                 
-                # ★★★ 新規追加: 繰越処理を実行し、結果を最終データとして表示 ★★★
-                # この処理が、お客様の要求する「②上記処理後に（①の処理後に）、繰越データがあるか探しに行って、繰越データがある場合、その配信月のデータも同様に①同様の処理を行い、データを追加。合算ではなく行（レコード）を追加。繰越対象が無くなるまで実施。」に該当します。
-                final_df = append_carryover_data(
-                    df_extracted_single_month, 
-                    df_livers, 
-                    st.session_state.selected_month_label, 
-                    AUTH_COOKIE_STRING
-                )
-                
-                st.session_state['df_extracted'] = final_df # 最終結果をセッションステートに保持
-
+                # 計算ステップのためにセッションステートに保持
+                st.session_state['df_extracted'] = df_extracted
+            
             else:
                 st.warning("結合対象の売上データがありません。")
-                st.session_state['df_extracted'] = pd.DataFrame() 
         else:
             st.info("実行ボタンを押して、処理対象ライバーファイルの読み込みと売上データの取得を行ってください。")
 
