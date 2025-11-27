@@ -488,12 +488,10 @@ def main():
                     
                     # 1. MKランク（全体ランク）の決定
                     
-                    # 【★★★ 修正箇所: 結合前の生データからMKsoulの合計額を抽出する ★★★】
-                    # df_room_sales_only (結合済み) ではなく、st.session_state.df_room_sales (取得直後) を参照する
+                    # df_raw_room_sales (fetch_and_process_dataの戻り値)からMKsoul行を確実に探す
                     df_raw_room_sales = st.session_state.df_room_sales
                     
                     try:
-                        # df_raw_room_sales (fetch_and_process_dataの戻り値)からMKsoul行を確実に探す
                         # .item()でPythonのintに変換
                         mk_sales_total = df_raw_room_sales[df_raw_room_sales['ルームID'] == 'MKsoul']['分配額'].iloc[0].item() 
                         
@@ -508,8 +506,7 @@ def main():
                     except Exception as e:
                         mk_sales_total = 0
                         st.error(f"🚨 重大なエラー: 合計売上計算中に予期せぬエラーが発生しました: {e}")
-                    # 【★★★ 修正箇所ここまで ★★★】
-
+                    
                     mk_rank_value = get_mk_rank(mk_sales_total)
                     st.info(f"🔑 **MK全体分配額**: {mk_sales_total:,}円 (→ **MKランク: {mk_rank_value}**)")
                     
@@ -522,12 +519,14 @@ def main():
                     df_room_sales_only['個別ランク'] = df_room_sales_only['分配額'].apply(get_individual_rank)
                     
                     # 3. 適用料率の生成
-                    # 'MKsoul'行は集計用なので、適用料率は'-'とする (以前のコードのまま)
+                    # 'MKsoul'行は集計用なので、適用料率は'-'とする
+                    # 【★★★ 修正箇所: ここから ↓ ★★★】
                     df_room_sales_only['適用料率'] = np.where(
                         df_room_sales_only['ルームID'] == 'MKsoul',
                         '-',
-                        df_room_sales_only['MKランク'].astype(str) + df_room_sales_only['個別ランク']
+                        '適用料率：' + df_room_sales_only['MKランク'].astype(str) + df_room_sales_only['個別ランク']
                     )
+                    # 【★★★ 修正箇所: ここまで ↑ ★★★】
                 else:
                     st.warning("ルーム売上データ（「ルーム売上」データ種別）が存在しないため、ランク判定はスキップしました。")
                     # MK全体分配額が不明なため、ランクを仮に設定 (表示用)
