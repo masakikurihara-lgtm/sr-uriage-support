@@ -65,21 +65,39 @@ def load_target_livers(url):
     """処理対象ライバーファイルを読み込み、DataFrameとして返す"""
     st.info(f"処理対象ライバーファイルを読み込み中... URL: {url}")
     try:
-        # Shift-JISの可能性があるため、encoding='shift_jis'で試行
-        df_livers = pd.read_csv(url, encoding='shift_jis')
-        # ヘッダーを確認し、必要に応じて整形
-        df_livers = df_livers.rename(columns={
-            'ルームID': 'ルームID', 
-            'ファイル名': 'ファイル名', 
-            'インボイス': 'インボイス'
-        })
-        # ルームIDを文字列として扱い、結合キーとする
-        df_livers['ルームID'] = df_livers['ルームID'].astype(str)
-        st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。")
-        return df_livers
-    except Exception as e:
-        st.error(f"🚨 処理対象ライバーファイルの読み込みに失敗しました: {e}")
-        return pd.DataFrame()
+        # 1. UTF-8 with BOM (utf_8_sig) を最初に試行 (最も一般的なWeb上のCSV形式)
+        #    これにより、BOM付きUTF-8による 0xef のエラーを回避できます。
+        df_livers = pd.read_csv(url, encoding='utf_8_sig')
+        st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: UTF-8 BOM)")
+        
+    except Exception as e_utf8:
+        # 2. UTF-8 (BOMなし) を試行
+        try:
+            df_livers = pd.read_csv(url, encoding='utf-8')
+            st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: UTF-8)")
+        
+        # 3. 最後に Shift-JIS を試行 (従来の日本のCSV形式)
+        except Exception as e_shiftjis:
+            try:
+                df_livers = pd.read_csv(url, encoding='shift_jis')
+                st.success(f"処理対象ライバーデータ ({len(df_livers)}件) の読み込みが完了しました。(エンコーディング: Shift-JIS)")
+            
+            except Exception as e_final:
+                # すべて失敗した場合
+                st.error(f"🚨 処理対象ライバーファイルの読み込みに失敗しました。エンコーディングエラー: {e_final}")
+                return pd.DataFrame()
+
+    # ヘッダーを確認し、必要に応じて整形 (読み込み成功後の共通処理)
+    df_livers = df_livers.rename(columns={
+        'ルームID': 'ルームID', 
+        'ファイル名': 'ファイル名', 
+        'インボイス': 'インボイス'
+    })
+    # ルームIDを文字列として扱い、結合キーとする
+    df_livers['ルームID'] = df_livers['ルームID'].astype(str)
+    
+    # 処理対象ライバーファイルの読み込みが成功した場合はここでDataFrameを返す
+    return df_livers
 
 
 def get_target_months():
