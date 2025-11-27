@@ -5,3 +5,4 @@ pandas
 beautifulsoup4
 html5lib
 pytz
+openpyxl  # Excel (.xlsx) ファイルの読み書きのために追加
