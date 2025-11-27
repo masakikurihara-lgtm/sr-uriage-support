@@ -1,0 +1,7 @@
+# requirements.txt
+streamlit>=1.30.0
+requests
+pandas
+beautifulsoup4
+html5lib
+pytz
