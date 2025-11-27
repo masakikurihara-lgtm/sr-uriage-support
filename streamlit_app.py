@@ -6,21 +6,20 @@ import calendar
 import io
 import pytz
 import logging
-from bs4 import BeautifulSoup
-import re
+from bs4 import BeautifulSoup 
+import re 
 import numpy as np # NumPyを追加
-# import openpyxl # pandasがエンジンとして使用するため、明示的なimportは必須ではない
 
 # ロギング設定 (デバッグ用)
 logging.basicConfig(level=logging.INFO)
 
 # --- 定数設定 ---
 # タイムチャージ請求書ページのURL
-SR_TIME_CHARGE_URL = "https://www.showroom-live.com/organizer/show_rank_time_charge_hist_invoice_format"
+SR_TIME_CHARGE_URL = "https://www.showroom-live.com/organizer/show_rank_time_charge_hist_invoice_format" 
 # プレミアムライブ請求書ページのURL
-SR_PREMIUM_LIVE_URL = "https://www.showroom-live.com/organizer/paid_live_hist_invoice_format"
+SR_PREMIUM_LIVE_URL = "https://www.showroom-live.com/organizer/paid_live_hist_invoice_format" 
 # ルーム売上請求書ページのURL
-SR_ROOM_SALES_URL = "https://www.showroom-live.com/organizer/point_hist_with_mixed_rate"
+SR_ROOM_SALES_URL = "https://www.showroom-live.com/organizer/point_hist_with_mixed_rate" 
 
 # 処理するデータの種類とそれに対応するURL
 DATA_TYPES = {
@@ -37,15 +36,12 @@ DATA_TYPES = {
     "time_charge": {
         "label": "タイムチャージ売上",
         "url": SR_TIME_CHARGE_URL,
-        "type": "standard"
+        "type": "standard" 
     }
 }
 
 # 処理対象ライバーファイルのURL
 TARGET_LIVER_FILE_URL = "https://mksoul-pro.com/showroom/file/shiharai-taishou.csv"
-
-# ★★★ 追加: ライバー履歴ファイルURLベース ★★★
-LIVER_HISTORY_BASE_URL = "https://mksoul-pro.com/showroom/csv/"
 
 # 日本のタイムゾーン
 JST = pytz.timezone('Asia/Tokyo')
@@ -55,7 +51,7 @@ try:
     # オーガナイザーCookieを取得
     AUTH_COOKIE_STRING = st.secrets["showroom"]["auth_cookie_string"]
     LOGIN_ID = st.secrets["showroom"]["login_id"]
-
+    
 except KeyError as e:
     AUTH_COOKIE_STRING = "DUMMY"
     LOGIN_ID = "DUMMY"
@@ -67,7 +63,9 @@ except KeyError as e:
 
 # --- ルーム売上支払想定額計算関数 ---
 def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue, is_invoice_registered):
-# ... (変更なし) ...
+    """
+    個別ランク、MKランク、個別分配額、インボイス登録有無から支払想定額を計算する
+    """
     # エラーチェック
     if individual_revenue == "#N/A" or individual_rank == "#N/A":
         return "#N/A"
@@ -132,7 +130,6 @@ def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue, is_
         
 # --- プレミアムライブ支払想定額計算関数 ---
 def calculate_paid_live_payment_estimate(paid_live_amount, is_invoice_registered):
-# ... (変更なし) ...
     """
     プレミアムライブ分配額、インボイス登録有無から支払想定額を計算する
     """
@@ -148,7 +145,7 @@ def calculate_paid_live_payment_estimate(paid_live_amount, is_invoice_registered
         is_registered = is_invoice_registered
         if not isinstance(is_registered, bool):
             is_registered = not (str(is_registered).lower().strip() in ('', 'false', '0', 'nan', 'none'))
-            
+        
         # インボイス登録有無による計算式の切り替え
         if is_registered:
             # インボイス登録者ロジック: (individual_revenue * 1.10 * 0.9) / 1.10
@@ -156,7 +153,7 @@ def calculate_paid_live_payment_estimate(paid_live_amount, is_invoice_registered
         else:
             # インボイス非登録者ロジック (既存): (individual_revenue * 1.08 * 0.9) / 1.10
             payment_estimate = (individual_revenue * 1.08 * 0.9) / 1.10
-            
+        
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate)
 
@@ -165,7 +162,6 @@ def calculate_paid_live_payment_estimate(paid_live_amount, is_invoice_registered
 
 # --- タイムチャージ支払想定額計算関数 ---
 def calculate_time_charge_payment_estimate(time_charge_amount, is_invoice_registered):
-# ... (変更なし) ...
     """
     タイムチャージ分配額、インボイス登録有無から支払想定額を計算する
     """
@@ -189,7 +185,7 @@ def calculate_time_charge_payment_estimate(time_charge_amount, is_invoice_regist
         else:
             # インボイス非登録者ロジック (既存): (individual_revenue * 1.08 * 1.00) / 1.10
             payment_estimate = (individual_revenue * 1.08 * 1.00) / 1.10
-            
+        
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate)
 
@@ -200,7 +196,6 @@ def calculate_time_charge_payment_estimate(time_charge_amount, is_invoice_regist
 # --- ユーティリティ関数（ランク判定ロジック） ---
 
 def get_individual_rank(sales_amount):
-# ... (変更なし) ...
     """
     ルーム売上分配額（数値）から個別ランクを判定する
     """
@@ -229,11 +224,10 @@ def get_individual_rank(sales_amount):
     elif amount >= 0:
         return "E"
     else:
-        return "E"
+        return "E" 
         
 
 def get_mk_rank(revenue):
-# ... (変更なし) ...
     """
     全体分配額合計からMKランク（1〜11）を判定する
     """
@@ -262,7 +256,6 @@ def get_mk_rank(revenue):
         
         
 def load_target_livers(url):
-# ... (変更なし) ...
     """処理対象ライバーファイルを読み込み、DataFrameとして返し、インボイスフラグを追加する"""
     st.info(f"処理対象ライバーファイルを読み込み中... URL: {url}")
     
@@ -320,7 +313,6 @@ def load_target_livers(url):
     return df_livers
 
 
-# ★★★ 修正: YYYY/MM形式の文字列を戻り値に追加 ★★★
 def get_target_months():
     """2023年10月以降の月リストを 'YYYY年MM月分' 形式で生成し、正確なUNIXタイムスタンプを計算する"""
     START_YEAR = 2023
@@ -343,9 +335,8 @@ def get_target_months():
             dt_obj_jst = JST.localize(dt_naive, is_dst=None)
             timestamp = int(dt_obj_jst.timestamp())
             ym_str = f"{current_year}{current_month:02d}"
-            ym_match = f"{current_year}/{current_month:02d}" # YYYY/MM 形式を追加
             
-            months.append((month_str, timestamp, ym_str, ym_match)) # (ラベル, UNIXタイムスタンプ, YYYYMM, YYYY/MM)
+            months.append((month_str, timestamp, ym_str)) # (ラベル, UNIXタイムスタンプ, YYYYMM)
         except Exception as e:
             logging.error(f"日付計算エラー ({month_str}): {e}")
             
@@ -360,7 +351,6 @@ def get_target_months():
 
 
 def create_authenticated_session(cookie_string):
-# ... (変更なし) ...
     """手動で取得したCookie文字列から認証済みRequestsセッションを構築する"""
     session = requests.Session()
     try:
@@ -384,7 +374,6 @@ def create_authenticated_session(cookie_string):
 
 
 def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
-# ... (変更なし) ...
     """
     指定されたタイムスタンプに基づいてSHOWROOMからデータを取得し、DataFrameに整形して返す
     """
@@ -503,7 +492,6 @@ def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
 
 
 def get_and_extract_sales_data(data_type_key, selected_timestamp, auth_cookie_string):
-# ... (変更なし) ...
     """
     指定されたデータタイプの売上データを取得し、セッションステートに格納する
     """
@@ -520,89 +508,6 @@ def get_and_extract_sales_data(data_type_key, selected_timestamp, auth_cookie_st
         st.session_state[f'df_{data_type_key}'] = pd.DataFrame(columns=['ルームID', '分配額', 'アカウントID', 'データ種別'])
     
     st.markdown("---")
-
-# ★★★ 新規追加: ライバー履歴ファイル読み込み関数とエラー修正 ★★★
-def load_liver_history_data(room_id, file_name_base, target_ym_match):
-    """
-    ライバー個別の履歴ファイル（.xlsx）を読み込み、指定月のデータ（または繰越データ）を取得する
-    エラーの原因となるNaN行をフィルタリングする処理を追加
-    """
-    file_name = f"uriage_{file_name_base}.xlsx"
-    file_url = f"{LIVER_HISTORY_BASE_URL}{file_name}"
-
-    st.info(f"ライバー履歴ファイル読み込み中: {file_url}")
-
-    try:
-        # Excelファイルを読み込む (openpyxlが必要)
-        df_history = pd.read_excel(file_url, sheet_name=0, engine='openpyxl')
-        
-        # 列名から不要な改行や空白を除去
-        df_history.columns = df_history.columns.str.strip().str.replace('\n', '')
-
-        if '配信月' not in df_history.columns:
-            st.error(f"🚨 履歴ファイル ({file_name_base}) に必須の列 '配信月' が見つかりません。")
-            return pd.DataFrame()
-            
-        # ★★★ 決定的な修正: NaN (空欄) の行を除去してから日付処理を行う ★★★
-        # NaNやNoneなどの欠損値を含む行を削除 (これがエラー回避のキモ)
-        df_history_cleaned = df_history.dropna(subset=['配信月'])
-        
-        if df_history_cleaned.empty:
-            st.warning(f"履歴ファイル ({file_name_base}): '配信月'が有効なデータ行がありませんでした。")
-            return pd.DataFrame()
-
-        # '配信月' を文字列に変換し、前後の空白を除去
-        # Excelの読み込み時にdatetimeオブジェクトになっている可能性があるため、strftimeで'YYYY/MM'形式に変換（文字列に変換後、'/XX'を削除する）
-        try:
-             # まず日付型に変換できるか試す
-            df_history_cleaned['配信月_str'] = pd.to_datetime(df_history_cleaned['配信月'], errors='coerce').dt.strftime('%Y/%m')
-        except:
-             # 失敗した場合（すでに文字列など）、そのまま使用
-            df_history_cleaned['配信月_str'] = df_history_cleaned['配信月'].astype(str).str.strip()
-            # YYYY/MM/DD形式などにも対応するため、最初の7文字(YYYY/MM)のみ取得
-            df_history_cleaned['配信月_str'] = df_history_cleaned['配信月_str'].str[:7]
-
-
-        # 配信月が target_ym_match (例: '2025/10') と一致する行を抽出
-        target_month_data = df_history_cleaned[
-            df_history_cleaned['配信月_str'] == target_ym_match
-        ].copy()
-
-        # 繰越データ (支払/繰越 = '繰越') も抽出
-        carry_over_data = df_history_cleaned[
-            df_history_cleaned['支払/繰越'].astype(str).str.strip() == '繰越'
-        ].copy()
-        
-        # 結合して返す
-        df_result = pd.concat([target_month_data, carry_over_data], ignore_index=True)
-        
-        # 必要な列を抽出・整形し、一般的な売上データフレームの形式に合わせる
-        
-        # 存在しない可能性のある列をNaNで埋めるための列リスト
-        required_cols = ['ルームID', '分配額', 'アカウントID', 'データ種別', '支払額']
-
-        # '合計支払想定額'の列名を探す (スペース/改行除去後の列名を使用)
-        payment_col = '合計支払想定額'
-        if payment_col in df_result.columns:
-            df_result['支払額'] = df_result[payment_col]
-        else:
-            df_result['支払額'] = np.nan
-        
-        df_result['ルームID'] = str(room_id)
-        df_result['分配額'] = np.nan # 履歴データでは「分配額」は使わないためNaN
-        df_result['アカウントID'] = np.nan # 履歴データでは「アカウントID」は使わないためNaN
-        df_result['データ種別'] = '繰越履歴'
-        
-        # 必要な列のみに絞り、欠損列を補完
-        df_result = df_result.reindex(columns=required_cols)
-        
-        st.success(f"✅ 履歴ファイル ({file_name_base}) の読み込みとフィルタリングが完了しました。取得行数: {len(df_result)}")
-        return df_result
-
-    except Exception as e:
-        st.error(f"🚨 履歴ファイル ({file_name_base}) の処理中に予期せぬエラーが発生しました: {e}。このライバーの履歴データはスキップします。")
-        return pd.DataFrame()
-
 
 # --- Streamlit UI ---
 
@@ -622,10 +527,7 @@ def main():
         st.session_state['df_premium_live'] = pd.DataFrame()
     if 'df_time_charge' not in st.session_state:
         st.session_state['df_time_charge'] = pd.DataFrame()
-    # ★★★ 追加: 履歴データ用ステート初期化 ★★★
-    if 'df_history_all' not in st.session_state:
-        st.session_state['df_history_all'] = pd.DataFrame()
-
+    
     # 新しいセッションステートの初期化
     if 'selected_month_label' not in st.session_state:
         st.session_state['selected_month_label'] = None
@@ -636,8 +538,7 @@ def main():
     # 1. 対象月選択 (処理の流れ ①)
     st.markdown("#### 1. 対象月選択")
     month_options_tuple = get_target_months()
-    # ★★★ 修正: month_options_tupleの要素数が4つになったため、ラベル抽出も修正 ★★★
-    month_labels = [label for label, _, _, _ in month_options_tuple] 
+    month_labels = [label for label, _, _ in month_options_tuple] 
     
     selected_label = st.selectbox(
         "処理対象の**配信月**を選択してください:",
@@ -645,10 +546,8 @@ def main():
         key='month_selector' # keyを追加し、選択を追跡
     )
     
-    # 4要素タプルから、ラベルに一致する要素を取得 (ts: timestamp, ym: YYYYMM, ym_match: YYYY/MM)
-    selected_data = next(((ts, ym, ym_match) for label, ts, ym, ym_match in month_options_tuple if label == selected_label), (None, None, None))
+    selected_data = next(((ts, ym) for label, ts, ym in month_options_tuple if label == selected_label), (None, None))
     selected_timestamp = selected_data[0]
-    selected_ym_match = selected_data[2] # YYYY/MM形式を取得
     
     if selected_timestamp is None:
         st.warning("有効な月が選択されていません。")
@@ -656,12 +555,10 @@ def main():
 
     # 選択された配信月をセッションステートに保存
     st.session_state['selected_month_label'] = selected_label
-    st.session_state['selected_ym_match'] = selected_ym_match
-
-    # ★★★ 修正: ログに合わせた情報表示 ★★★
-    st.info(f"選択された月: **{selected_label}** (繰越判定用: {selected_ym_match})")
     
-    # 2. データ取得と抽出の実行
+    st.info(f"選択された月: **{selected_label}**")
+    
+    # 2. 実行ボタン (処理の流れ ②)
     st.markdown("#### 2. データ取得と抽出の実行")
     
     if st.button("🚀 データの取得・抽出を実行", type="primary"):
@@ -687,36 +584,7 @@ def main():
 
             # タイムチャージ売上
             get_and_extract_sales_data("time_charge", selected_timestamp, AUTH_COOKIE_STRING) 
-            
-            # --- ★★★ 追加: ライバー履歴ファイルの読み込みと抽出 ★★★ ---
-            st.subheader("ライバー履歴ファイルの処理 (繰越データ抽出)")
-            df_history_list = []
-            
-            # ルームID='MKsoul'の行と、ファイル名がない行はスキップ
-            df_target_livers_only = df_livers[
-                (df_livers['ルームID'] != 'MKsoul') & 
-                (pd.notna(df_livers['ファイル名']))
-            ]
-            
-            for _, row in df_target_livers_only.iterrows():
-                room_id = row['ルームID']
-                file_name_base = row['ファイル名'] # uriage_XXXXXX_name の XXXXXX_name の部分
-                
-                # 履歴ファイル読み込み関数を呼び出し、エラーハンドリングは関数内で行う
-                df_history = load_liver_history_data(room_id, file_name_base, selected_ym_match)
-                
-                if not df_history.empty:
-                    df_history_list.append(df_history)
-
-            if df_history_list:
-                df_history_all = pd.concat(df_history_list, ignore_index=True)
-                st.session_state['df_history_all'] = df_history_all
-                st.success(f"✅ 全ライバーの履歴データ抽出が完了しました。（合計 {len(df_history_all)}行）")
-            else:
-                st.session_state['df_history_all'] = pd.DataFrame()
-                st.warning("履歴ファイルから抽出されたデータはありませんでした。")
-            # -----------------------------------------------------------------
-
+        
         st.balloons()
         st.success("🎉 **売上データの取得とセッションステートへの格納が完了しました！**")
 
@@ -744,9 +612,7 @@ def main():
             all_sales_data = pd.concat([
                 st.session_state.df_room_sales,
                 st.session_state.df_premium_live,
-                st.session_state.df_time_charge,
-                # ★★★ 修正: 履歴データ（繰越）を結合対象に追加 ★★★
-                st.session_state.get('df_history_all', pd.DataFrame(columns=['ルームID', '分配額', 'アカウントID', 'データ種別', '支払額']))
+                st.session_state.df_time_charge
             ])
             
             if not all_sales_data.empty:
@@ -754,22 +620,15 @@ def main():
                 st.dataframe(all_sales_data, height=150)
                 
                 # ルームIDをキーに処理対象ライバーと結合
-                # 履歴データは多重行になるため、マージはせず、結合されたall_sales_dataをそのまま処理対象とする
-                # ただし、ライバー情報（インボイスフラグ）を付与するために、df_liversとマージする
-                
-                # df_liversから必要な列のみ抽出
-                livers_info = df_livers[['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered']].copy()
-                
-                # all_sales_dataにライバー情報を紐付け
                 df_merged = pd.merge(
+                    df_livers,
                     all_sales_data,
-                    livers_info,
                     on='ルームID',
                     how='left'
                 )
 
-                # 売上データがないライバー（NULL行）の分配額を0として処理 (繰越履歴はNaNのままにする)
-                df_merged['分配額'] = df_merged['分配額'].fillna(0)
+                # 売上データがないライバー（NULL行）の分配額を0として処理
+                df_merged['分配額'] = df_merged['分配額'].fillna(0).astype(int)
                 
                 # 表示用に、売上がゼロの行のデータ種別をNaNから「売上なし」などに変換
                 df_merged['データ種別'] = df_merged['データ種別'].fillna('売上データなし')
@@ -783,25 +642,31 @@ def main():
                 
                 # ★★★ 修正点3: マージ直後にis_invoice_registered列を明示的にbool型に再キャストする (二重の防御) ★★★
                 if 'is_invoice_registered' in df_merged.columns:
-                    # is_invoice_registeredがNaNの場合はFalseに設定する
-                    df_merged['is_invoice_registered'] = df_merged['is_invoice_registered'].fillna(False).astype(bool)
+                    df_merged['is_invoice_registered'] = df_merged['is_invoice_registered'].astype(bool)
 
 
                 # 🌟 ルーム売上のみにランク情報を付与 🌟
-                # df_mergedを「ルーム売上」データと「その他・履歴」データに分割
+                # df_mergedを「ルーム売上」データと「その他」データに分割
                 df_room_sales_only = df_merged[df_merged['データ種別'] == 'ルーム売上'].copy()
-                df_other_history_sales = df_merged[df_merged['データ種別'] != 'ルーム売上'].copy()
+                df_other_sales = df_merged[df_merged['データ種別'] != 'ルーム売上'].copy()
                 
                 
                 if not df_room_sales_only.empty:
                     
                     # 1. MKランク（全体ランク）の決定
-                    # df_merged内からMKsoulの分配額を取得（念のため）
-                    mk_sales_total = df_room_sales_only[df_room_sales_only['ルームID'] == 'MKsoul']['分配額'].iloc[0].item() if not df_room_sales_only[df_room_sales_only['ルームID'] == 'MKsoul'].empty else 0
+                    df_raw_room_sales = st.session_state.df_room_sales
                     
-                    if mk_sales_total == 0:
-                        st.warning("⚠️ MK全体分配額が0です。SHOWROOM側のデータがないか、合計金額の抽出に失敗している可能性があります。")
-
+                    try:
+                        mk_sales_total = df_raw_room_sales[df_raw_room_sales['ルームID'] == 'MKsoul']['分配額'].iloc[0].item() 
+                        if mk_sales_total == 0:
+                            st.warning("⚠️ MK全体分配額が0です。SHOWROOM側のデータがないか、合計金額の抽出に失敗している可能性があります。")
+                    except IndexError:
+                        mk_sales_total = 0
+                        st.error("🚨 重大なエラー: 合計売上を示す 'MKsoul' 行がデータ取得元から見つかりませんでした。")
+                    except Exception as e:
+                        mk_sales_total = 0
+                        st.error(f"🚨 重大なエラー: 合計売上計算中に予期せぬエラーが発生しました: {e}")
+                    
                     mk_rank_value = get_mk_rank(mk_sales_total)
                     st.info(f"🔑 **MK全体分配額**: {mk_sales_total:,}円 (→ **MKランク: {mk_rank_value}**)")
                     
@@ -841,28 +706,28 @@ def main():
                     df_room_sales_only['支払額'] = np.nan
 
                 
-                # 5. その他の売上行・履歴行のランク列を埋める
-                df_other_history_sales['MKランク'] = '-'
-                df_other_history_sales['個別ランク'] = '-'
-                df_other_history_sales['適用料率'] = '-'
+                # 5. その他の売上行のランク列を埋める
+                df_other_sales['MKランク'] = '-'
+                df_other_sales['個別ランク'] = '-'
+                df_other_sales['適用料率'] = '-'
 
                 # 6. その他の売上支払額の計算
-                # 履歴データには支払額がすでに入っている可能性があるため、NaNの場合のみ計算する
-                
-                # プレミアムライブ売上 (支払額がNaNの場合のみ計算)
-                premium_live_mask = (df_other_history_sales['データ種別'] == 'プレミアムライブ売上') & pd.isna(df_other_history_sales['支払額'])
+                df_other_sales['支払額'] = np.nan # 初期化
+
+                # プレミアムライブ売上
+                premium_live_mask = df_other_sales['データ種別'] == 'プレミアムライブ売上'
                 if premium_live_mask.any():
-                    df_other_history_sales.loc[premium_live_mask, '支払額'] = df_other_history_sales[premium_live_mask].apply(
+                    df_other_sales.loc[premium_live_mask, '支払額'] = df_other_sales[premium_live_mask].apply(
                         lambda row: calculate_paid_live_payment_estimate(
                             row['分配額'],
                             row['is_invoice_registered'] # 厳格チェック付きの関数に渡す
                         ), axis=1
                     )
 
-                # タイムチャージ売上 (支払額がNaNの場合のみ計算)
-                time_charge_mask = (df_other_history_sales['データ種別'] == 'タイムチャージ売上') & pd.isna(df_other_history_sales['支払額'])
+                # タイムチャージ売上
+                time_charge_mask = df_other_sales['データ種別'] == 'タイムチャージ売上'
                 if time_charge_mask.any():
-                    df_other_history_sales.loc[time_charge_mask, '支払額'] = df_other_history_sales[time_charge_mask].apply(
+                    df_other_sales.loc[time_charge_mask, '支払額'] = df_other_sales[time_charge_mask].apply(
                         lambda row: calculate_time_charge_payment_estimate(
                             row['分配額'],
                             row['is_invoice_registered'] # 厳格チェック付きの関数に渡す
@@ -870,16 +735,11 @@ def main():
                     )
                 
                 # 売上データがない行の支払額は0
-                no_sales_mask = (df_other_history_sales['データ種別'] == '売上データなし') & pd.isna(df_other_history_sales['支払額'])
-                df_other_history_sales.loc[no_sales_mask, '支払額'] = 0
-                
-                # 履歴データ（繰越履歴）は、Excelから読み込んだ「支払額」を使用し、NaNの場合は0とする
-                history_mask = df_other_history_sales['データ種別'] == '繰越履歴'
-                df_other_history_sales.loc[history_mask, '支払額'] = df_other_history_sales.loc[history_mask, '支払額'].fillna(0)
-
+                no_sales_mask = df_other_sales['データ種別'] == '売上データなし'
+                df_other_sales.loc[no_sales_mask, '支払額'] = 0
 
                 # 7. 最終的なDataFrameを再結合
-                df_extracted = pd.concat([df_room_sales_only, df_other_history_sales], ignore_index=True)
+                df_extracted = pd.concat([df_room_sales_only, df_other_sales], ignore_index=True)
                 
                 # 8. 不要な列を整理し、抽出が完了したDataFrameを表示 (ランク情報を追加)
                 final_display_cols = ['ルームID']
@@ -887,7 +747,7 @@ def main():
                     final_display_cols.append('ファイル名')
                 if 'インボイス' in df_livers.columns:
                     final_display_cols.append('インボイス')
-                    
+                
                 # is_invoice_registered列は、計算に使われた「真のブール値」を示すため、表示列に残します
                 final_display_cols.extend(['is_invoice_registered', 'データ種別', '分配額', '個別ランク', 'MKランク', '適用料率', '支払額', 'アカウントID', '配信月'])
                 
@@ -896,9 +756,7 @@ def main():
                 df_extracted = df_extracted[df_extracted_cols]
                 
                 # 支払額列の表示形式を調整（整数としてNaN以外を扱う）
-                # エラー文字列はNaN/0として処理
-                error_values = ['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK', '#N/A']
-                df_extracted['支払額'] = df_extracted['支払額'].replace(error_values, np.nan)
+                df_extracted['支払額'] = df_extracted['支払額'].replace(['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK', '#N/A'], np.nan)
                 df_extracted['支払額'] = pd.to_numeric(df_extracted['支払額'], errors='coerce').fillna(0).astype('Int64') # Int64でNaNを許容する整数型に
 
                 # ソートして見やすくする（オプション）
