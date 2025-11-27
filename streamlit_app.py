@@ -59,7 +59,7 @@ except KeyError as e:
     st.stop()
 
 
-# --- 支払額計算関数 (修正済み: インボイスロジック追加) ---
+# --- 支払額計算関数 (修正済み: 厳密な型チェックを追加) ---
 
 # --- ルーム売上支払想定額計算関数 ---
 def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue, is_invoice_registered):
@@ -106,16 +106,22 @@ def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue, is_
         
         if rate is None:
             return "#ERROR_RANK"
+            
+        # ★★★ 決定的な修正: 最終防衛線としてのブール値チェック ★★★
+        is_registered = is_invoice_registered
+        if not isinstance(is_registered, bool):
+            # 文字列 'False', 'NaN', None などが渡された場合に、PythonでTrueとして扱われるのを防ぐ
+            # 値を文字列化し、それが空、'false', '0', 'nan', 'none' のいずれかであれば False と判定する
+            # それ以外の文字列（例: 'True', 'T88...'）は True と判定する
+            is_registered = not (str(is_registered).lower().strip() in ('', 'false', '0', 'nan', 'none'))
+
 
         # インボイス登録有無による計算式の切り替え
-        # is_invoice_registeredが純粋なブール値であることを前提とする
-        if is_invoice_registered:
+        if is_registered:
             # インボイス登録者ロジック: (individual_revenue * 1.10 * rate) / 1.10
-            # 1.10をかけることで、SHOWROOMから分配額を**税込**とみなし、その上で料率をかけ、最後に/1.10で税抜に戻すイメージ
             payment_estimate = (individual_revenue * 1.10 * rate) / 1.10
         else:
             # インボイス非登録者ロジック (既存): (individual_revenue * 1.08 * rate) / 1.10
-            # 1.08をかけることで、SHOWROOMから分配額を**税抜**とみなし、その上で料率をかけ、最後に/1.10で税抜に戻すイメージ
             payment_estimate = (individual_revenue * 1.08 * rate) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
@@ -134,11 +140,16 @@ def calculate_paid_live_payment_estimate(paid_live_amount, is_invoice_registered
         return np.nan
         
     try:
-        # 分配額を数値に変換 (Pandasのapplyで使用するため、文字列のチェックは不要)
+        # 分配額を数値に変換 
         individual_revenue = float(paid_live_amount)
+
+        # ★★★ 決定的な修正: 最終防衛線としてのブール値チェック ★★★
+        is_registered = is_invoice_registered
+        if not isinstance(is_registered, bool):
+            is_registered = not (str(is_registered).lower().strip() in ('', 'false', '0', 'nan', 'none'))
         
         # インボイス登録有無による計算式の切り替え
-        if is_invoice_registered:
+        if is_registered:
             # インボイス登録者ロジック: (individual_revenue * 1.10 * 0.9) / 1.10
             payment_estimate = (individual_revenue * 1.10 * 0.9) / 1.10
         else:
@@ -161,11 +172,16 @@ def calculate_time_charge_payment_estimate(time_charge_amount, is_invoice_regist
         return np.nan
 
     try:
-        # 分配額を数値に変換 (Pandasのapplyで使用するため、文字列のチェックは不要)
+        # 分配額を数値に変換 
         individual_revenue = float(time_charge_amount)
         
+        # ★★★ 決定的な修正: 最終防衛線としてのブール値チェック ★★★
+        is_registered = is_invoice_registered
+        if not isinstance(is_registered, bool):
+            is_registered = not (str(is_registered).lower().strip() in ('', 'false', '0', 'nan', 'none'))
+
         # インボイス登録有無による計算式の切り替え
-        if is_invoice_registered:
+        if is_registered:
             # インボイス登録者ロジック: (individual_revenue * 1.10 * 1.00) / 1.10
             payment_estimate = (individual_revenue * 1.10 * 1.00) / 1.10
         else:
@@ -274,6 +290,7 @@ def load_target_livers(url):
         return pd.DataFrame()
     
     # ★★★ 修正点2: インボイス登録判定ロジックと明示的なbool型キャストの追加 ★★★
+    # インボイス列は表示のために保持しつつ、判定用の列 'is_invoice_registered' を作成する
     if 'インボイス' in df_livers.columns:
         # 値が入っていればTrue (登録済み)、ブランク/NaNであればFalse (未登録)
         # 1. 文字列化/空白除去
@@ -580,6 +597,7 @@ def main():
             expected_cols = ['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered']
             display_cols = [col for col in expected_cols if col in df_livers.columns]
             
+            # 「インボイス」列が残るのは、ユーザー様提供のデータ源として重要であるためです。
             st.dataframe(df_livers[display_cols], height=150)
             
             # --- 売上データを結合して抽出 ---
@@ -616,23 +634,18 @@ def main():
                     lambda row: row['アカウントID'] if pd.notna(row['アカウントID']) else st.session_state.login_account_id if row['ルームID'] == 'MKsoul' else np.nan, axis=1
                 )
                 
-                # ★★★ 修正点3 (最終): マージ直後にis_invoice_registered列を明示的にbool型に再キャストする ★★★
-                # これにより、以降の分割や計算で型が誤って伝播することを防ぎ、
-                # Pythonの if 文が正しく False を False として処理することを保証します。
+                # ★★★ 修正点3: マージ直後にis_invoice_registered列を明示的にbool型に再キャストする ★★★
+                # 最後の防御として、ここでも型を強制します。
                 if 'is_invoice_registered' in df_merged.columns:
                     df_merged['is_invoice_registered'] = df_merged['is_invoice_registered'].astype(bool)
 
 
                 # 🌟 ルーム売上のみにランク情報を付与 🌟
                 # df_mergedを「ルーム売上」データと「その他」データに分割
-                # ※ df_mergedはここで既に正しいbool型になっている
                 df_room_sales_only = df_merged[df_merged['データ種別'] == 'ルーム売上'].copy()
                 df_other_sales = df_merged[df_merged['データ種別'] != 'ルーム売上'].copy()
                 
                 
-                # 前回の修正で入れた重複するastype(bool)は、df_mergedへの適用に一本化し削除しました。
-
-
                 if not df_room_sales_only.empty:
                     
                     # 1. MKランク（全体ランク）の決定
@@ -672,7 +685,7 @@ def main():
                                 row['個別ランク'], 
                                 row['MKランク'], 
                                 row['分配額'],
-                                row['is_invoice_registered'] # 確実にbool型が渡る
+                                row['is_invoice_registered'] # 厳格チェック付きの関数に渡す
                             ), axis=1)
                     )
                     
@@ -702,7 +715,7 @@ def main():
                     df_other_sales.loc[premium_live_mask, '支払額'] = df_other_sales[premium_live_mask].apply(
                         lambda row: calculate_paid_live_payment_estimate(
                             row['分配額'],
-                            row['is_invoice_registered'] # 確実にbool型が渡る
+                            row['is_invoice_registered'] # 厳格チェック付きの関数に渡す
                         ), axis=1
                     )
 
@@ -712,7 +725,7 @@ def main():
                     df_other_sales.loc[time_charge_mask, '支払額'] = df_other_sales[time_charge_mask].apply(
                         lambda row: calculate_time_charge_payment_estimate(
                             row['分配額'],
-                            row['is_invoice_registered'] # 確実にbool型が渡る
+                            row['is_invoice_registered'] # 厳格チェック付きの関数に渡す
                         ), axis=1
                     )
                 
@@ -730,6 +743,7 @@ def main():
                 if 'インボイス' in df_livers.columns:
                     final_display_cols.append('インボイス')
                 
+                # is_invoice_registered列は、計算に使われた「真のブール値」を示すため、表示列に残します
                 final_display_cols.extend(['is_invoice_registered', 'データ種別', '分配額', '個別ランク', 'MKランク', '適用料率', '支払額', 'アカウントID', '配信月'])
                 
                 # DataFrameに存在しない列を除外
