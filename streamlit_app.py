@@ -108,6 +108,7 @@ def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue, is_
             return "#ERROR_RANK"
 
         # インボイス登録有無による計算式の切り替え
+        # is_invoice_registeredが純粋なブール値であることを前提とする
         if is_invoice_registered:
             # インボイス登録者ロジック: (individual_revenue * 1.10 * rate) / 1.10
             # 1.10をかけることで、SHOWROOMから分配額を**税込**とみなし、その上で料率をかけ、最後に/1.10で税抜に戻すイメージ
@@ -265,7 +266,6 @@ def load_target_livers(url):
     # ★★★ 修正点1: 列名から前後の空白文字を全て除去する（KeyError対策） ★★★
     df_livers.columns = df_livers.columns.str.strip()
 
-    # ヘッダーを確認し、必要に応じて整形 (列名から空白が除去されたため、renameは不要だが、Room IDの処理は残す)
     # ルームIDを文字列として扱い、結合キーとする
     if 'ルームID' in df_livers.columns:
         df_livers['ルームID'] = df_livers['ルームID'].astype(str)
@@ -273,12 +273,13 @@ def load_target_livers(url):
         st.error("🚨 処理対象ライバーファイルに必須の列 **'ルームID'** が見つかりません。")
         return pd.DataFrame()
     
-    # ★★★ 修正点2: インボイス登録判定ロジックの追加 ★★★
-    # 「インボイス」の項目に値が入っているかブランクかで判定
+    # ★★★ 修正点2: インボイス登録判定ロジックと明示的なbool型キャストの追加 ★★★
     if 'インボイス' in df_livers.columns:
         # 値が入っていればTrue (登録済み)、ブランク/NaNであればFalse (未登録)
-        # .str.strip().fillna('') で、文字列として扱い、NaNを空文字列に変換し、空白を除去してから長さをチェックする
-        df_livers['is_invoice_registered'] = df_livers['インボイス'].astype(str).str.strip().apply(lambda x: len(x) > 0)
+        # 1. 文字列化/空白除去
+        # 2. ブール値のSeriesを作成
+        # 3. 明示的に純粋なbool型にキャスト（後続処理での型変換を防ぐ）
+        df_livers['is_invoice_registered'] = df_livers['インボイス'].astype(str).str.strip().apply(lambda x: len(x) > 0).astype(bool)
     else:
         # インボイス列がない場合は全てFalseとする
         st.warning("⚠️ 処理対象ライバーファイルに **'インボイス'** 列が見つかりません。全てのライバーを非登録者として処理します。")
@@ -286,9 +287,6 @@ def load_target_livers(url):
     
     st.info(f"インボイス登録者 ({df_livers['is_invoice_registered'].sum()}名) のフラグ付けが完了しました。")
     
-    # デバッグ情報 (オプションで残しておくと便利)
-    st.info(f"デバッグ情報: 認識された列名: {df_livers.columns.tolist()}")
-
     return df_livers
 
 
@@ -416,8 +414,6 @@ def fetch_and_process_data(timestamp, cookie_string, sr_url, data_type_key):
             
             if total_amount_tag:
                 # <span>タグ内を検索して、支払い金額（税抜）を抽出
-                # 例: '支払い金額（税抜）: <span class="fw-b"> 1,182,445円</span><br>' 
-                # str()に変換して正規表現を適用
                 match = re.search(r'支払い金額（税抜）:\s*<span[^>]*>\s*([\d,]+)円', str(total_amount_tag))
                 
                 if match:
@@ -546,7 +542,6 @@ def main():
         st.markdown("---")
         
         # 処理対象ライバーファイルの読み込み (処理の流れ ③)
-        # ★★★ load_target_livers関数が修正済み（列名空白除去・is_invoice_registered作成） ★★★
         df_livers = load_target_livers(TARGET_LIVER_FILE_URL)
         st.session_state['df_livers'] = df_livers # セッションステートに保存
         
@@ -581,11 +576,8 @@ def main():
             df_livers = st.session_state.df_livers
             st.subheader("処理対象ライバー一覧")
             
-            # ★★★ 修正点3: 存在しない列の参照による KeyError を防ぐため、表示列を動的に決定する ★★★
-            # 期待される列名のリスト（順番を意図）
+            # 存在しない列の参照による KeyError を防ぐため、表示列を動的に決定する
             expected_cols = ['ルームID', 'ファイル名', 'インボイス', 'is_invoice_registered']
-            
-            # df_liversに実際に存在する列のみをフィルタリング
             display_cols = [col for col in expected_cols if col in df_livers.columns]
             
             st.dataframe(df_livers[display_cols], height=150)
@@ -619,7 +611,7 @@ def main():
                 
                 # 配信月とアカウントIDを追加
                 df_merged['配信月'] = st.session_state.selected_month_label
-                # アカウントIDが結合でNaNになった場合にログインIDを埋める（MKsoul行以外は埋める必要はないはずだが、念のため）
+                # アカウントIDを埋める
                 df_merged['アカウントID'] = df_merged.apply(
                     lambda row: row['アカウントID'] if pd.notna(row['アカウントID']) else st.session_state.login_account_id if row['ルームID'] == 'MKsoul' else np.nan, axis=1
                 )
@@ -631,25 +623,26 @@ def main():
                 df_other_sales = df_merged[df_merged['データ種別'] != 'ルーム売上'].copy()
                 
                 
+                # ★★★ 修正点3: 計算前にis_invoice_registered列を明示的にbool型に再キャスト ★★★
+                # これにより、Pandasの型アップキャストによる文字列'False'の混入を防ぎ、if文が正しく機能するようにする
+                if 'is_invoice_registered' in df_room_sales_only.columns:
+                    df_room_sales_only['is_invoice_registered'] = df_room_sales_only['is_invoice_registered'].astype(bool)
+                if 'is_invoice_registered' in df_other_sales.columns:
+                    df_other_sales['is_invoice_registered'] = df_other_sales['is_invoice_registered'].astype(bool)
+
+
                 if not df_room_sales_only.empty:
                     
                     # 1. MKランク（全体ランク）の決定
-                    
-                    # df_raw_room_sales (fetch_and_process_dataの戻り値)からMKsoul行を確実に探す
                     df_raw_room_sales = st.session_state.df_room_sales
                     
                     try:
-                        # .item()でPythonのintに変換
                         mk_sales_total = df_raw_room_sales[df_raw_room_sales['ルームID'] == 'MKsoul']['分配額'].iloc[0].item() 
-                        
-                        # 合計額が0の場合の警告
                         if mk_sales_total == 0:
                             st.warning("⚠️ MK全体分配額が0です。SHOWROOM側のデータがないか、合計金額の抽出に失敗している可能性があります。")
-
                     except IndexError:
-                        # MKsoul行がdf_raw_room_salesに存在しない場合の重大エラー
                         mk_sales_total = 0
-                        st.error("🚨 重大なエラー: 合計売上を示す 'MKsoul' 行がデータ取得元から見つかりませんでした。fetch_and_process_data関数での取得に失敗しています。")
+                        st.error("🚨 重大なエラー: 合計売上を示す 'MKsoul' 行がデータ取得元から見つかりませんでした。")
                     except Exception as e:
                         mk_sales_total = 0
                         st.error(f"🚨 重大なエラー: 合計売上計算中に予期せぬエラーが発生しました: {e}")
@@ -657,24 +650,18 @@ def main():
                     mk_rank_value = get_mk_rank(mk_sales_total)
                     st.info(f"🔑 **MK全体分配額**: {mk_sales_total:,}円 (→ **MKランク: {mk_rank_value}**)")
                     
-                    # 結合後のライバーデータ（MKsoul行を除く）にMKランクを設定
-                    # df_room_sales_onlyには、df_mergedから抽出されたライバーのルーム売上行のみが含まれている
+                    # MKランク、個別ランクの設定
                     df_room_sales_only['MKランク'] = mk_rank_value
-                    
-                    # 2. 個別ランクの決定
-                    # ルーム売上分配額に基づいて個別ランクを適用
                     df_room_sales_only['個別ランク'] = df_room_sales_only['分配額'].apply(get_individual_rank)
                     
-                    # 3. 適用料率の生成
-                    # 'MKsoul'行は集計用なので、適用料率は'-'とする
+                    # 適用料率の生成
                     df_room_sales_only['適用料率'] = np.where(
                         df_room_sales_only['ルームID'] == 'MKsoul',
                         '-',
                         '適用料率：' + df_room_sales_only['MKランク'].astype(str) + df_room_sales_only['個別ランク']
                     )
                     
-                    # 4. ルーム売上支払額の計算 (個別のライバー行に対して適用)
-                    # MKsoul行（集計行）は計算対象外（NaNを適用）
+                    # 4. ルーム売上支払額の計算
                     df_room_sales_only['支払額'] = np.where(
                         df_room_sales_only['ルームID'] == 'MKsoul',
                         np.nan, # MKsoul行は支払額なし
@@ -683,13 +670,12 @@ def main():
                                 row['個別ランク'], 
                                 row['MKランク'], 
                                 row['分配額'],
-                                row['is_invoice_registered'] # ★★★ 修正点: インボイスフラグを渡す ★★★
+                                row['is_invoice_registered'] # 確実にbool型が渡る
                             ), axis=1)
                     )
                     
                 else:
                     st.warning("ルーム売上データ（「ルーム売上」データ種別）が存在しないため、ランク判定・支払額計算はスキップしました。")
-                    # MK全体分配額が不明なため、ランクを仮に設定 (表示用)
                     mk_sales_total = 0 
                     mk_rank_value = get_mk_rank(mk_sales_total) 
                     st.info(f"🔑 **MK全体分配額**: 0円 (→ **MKランク: {mk_rank_value}**)")
@@ -697,7 +683,7 @@ def main():
                     df_room_sales_only['MKランク'] = np.nan
                     df_room_sales_only['個別ランク'] = np.nan
                     df_room_sales_only['適用料率'] = '-'
-                    df_room_sales_only['支払額'] = np.nan # データがないので支払額もなし
+                    df_room_sales_only['支払額'] = np.nan
 
                 
                 # 5. その他の売上行のランク列を埋める
@@ -711,22 +697,20 @@ def main():
                 # プレミアムライブ売上
                 premium_live_mask = df_other_sales['データ種別'] == 'プレミアムライブ売上'
                 if premium_live_mask.any():
-                    # ★★★ 修正点: インボイスフラグを渡す ★★★
                     df_other_sales.loc[premium_live_mask, '支払額'] = df_other_sales[premium_live_mask].apply(
                         lambda row: calculate_paid_live_payment_estimate(
                             row['分配額'],
-                            row['is_invoice_registered']
+                            row['is_invoice_registered'] # 確実にbool型が渡る
                         ), axis=1
                     )
 
                 # タイムチャージ売上
                 time_charge_mask = df_other_sales['データ種別'] == 'タイムチャージ売上'
                 if time_charge_mask.any():
-                    # ★★★ 修正点: インボイスフラグを渡す ★★★
                     df_other_sales.loc[time_charge_mask, '支払額'] = df_other_sales[time_charge_mask].apply(
                         lambda row: calculate_time_charge_payment_estimate(
                             row['分配額'],
-                            row['is_invoice_registered']
+                            row['is_invoice_registered'] # 確実にbool型が渡る
                         ), axis=1
                     )
                 
@@ -738,7 +722,6 @@ def main():
                 df_extracted = pd.concat([df_room_sales_only, df_other_sales], ignore_index=True)
                 
                 # 8. 不要な列を整理し、抽出が完了したDataFrameを表示 (ランク情報を追加)
-                # ファイル名とインボイス列が存在する場合のみ含める
                 final_display_cols = ['ルームID']
                 if 'ファイル名' in df_livers.columns:
                     final_display_cols.append('ファイル名')
@@ -747,7 +730,9 @@ def main():
                 
                 final_display_cols.extend(['is_invoice_registered', 'データ種別', '分配額', '個別ランク', 'MKランク', '適用料率', '支払額', 'アカウントID', '配信月'])
                 
-                df_extracted = df_extracted[final_display_cols]
+                # DataFrameに存在しない列を除外
+                df_extracted_cols = [col for col in final_display_cols if col in df_extracted.columns]
+                df_extracted = df_extracted[df_extracted_cols]
                 
                 # 支払額列の表示形式を調整（整数としてNaN以外を扱う）
                 df_extracted['支払額'] = df_extracted['支払額'].replace(['#ERROR_CALC', '#ERROR_MK', '#ERROR_RANK', '#N/A'], np.nan)
