@@ -596,10 +596,11 @@ def get_kurikoshi_months_from_excel(file_basename, target_payment_month_str):
 def main():
     st.set_page_config(page_title="SHOWROOM 支払明細書作成補助ツール", layout="wide")
     st.markdown(
-        "<h1 style='font-size:28px; text-align:left; color:#1f2937;'>SHOWROOM 支払明細書作成補助ツール (データ取得・抽出)</h1>",
+        "<h1 style='font-size:28px; text-align:left; color:#1f2937;'>SHOWROOM 支払明細書作成補助ツール</h1>",
         unsafe_allow_html=True
     )
-    st.markdown("<p style='text-align: left;'>💡 <b>データの取得と、対象ライバーデータへの紐付け（抽出）までを行います。</b></p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: left;'>⚠️ <b>注意</b>: このツールは、<b>Secretsに設定されたCookieが有効な間のみ</b>動作します。</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: left;'>⚠️ <b>注意</b>: <b>処理対象ライバーファイル（ https://mksoul-pro.com/showroom/file/shiharai-taishou.csv ）の内容が適切か確認してください</b></p>", unsafe_allow_html=True)
     st.markdown("---")
     
     # セッションステートの初期化
