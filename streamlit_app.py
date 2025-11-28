@@ -511,6 +511,88 @@ def get_and_extract_sales_data(data_type_key, selected_timestamp, auth_cookie_st
 
 # --- Streamlit UI ---
 
+
+# -------------------------
+# ヘルパー: 履歴Excelから「最新支払行」起点で連続する繰越配信月を取得する
+# -------------------------
+def get_kurikoshi_months_from_excel(file_basename, target_payment_month_str):
+    """
+    file_basename: '350565_emily' のようにファイル名部分（拡張子無し）
+    target_payment_month_str: 'YYYY/MM' (例 '2025/12')  --- 履歴内の '支払月' と合わせる形式
+    戻り値: ['YYYY/MM', 'YYYY/MM', ...] 最新(今回支払) → 古い 順で返す
+    """
+    import pandas as _pd
+    import requests as _req
+    import io as _io
+
+    url_xlsx = f"https://mksoul-pro.com/showroom/csv/uriage_{file_basename}.xlsx"
+    try:
+        r = _req.get(url_xlsx, timeout=15)
+        r.raise_for_status()
+        df_hist = _pd.read_excel(_io.BytesIO(r.content))
+    except Exception:
+        # Excel取得/解析に失敗したら空で返す（PDF対応は必要なら別途実装）
+        return []
+
+    # 列名整形
+    df_hist.columns = df_hist.columns.str.strip()
+
+    # 必須列チェック
+    expected = ['配信月', '支払月', '支払/繰越']
+    if not all(col in df_hist.columns for col in expected):
+        return []
+
+    # 配信月/支払月を 'YYYY/MM' 形式へ正規化する関数
+    def norm_month_to_yyyy_mm(val):
+        # 既に 'YYYY/MM' の文字列なら整形して返す
+        if isinstance(val, str) and '/' in val:
+            parts = val.split('/')
+            if len(parts) >= 2:
+                y = parts[0].zfill(4)
+                m = parts[1].zfill(2)
+                return f"{y}/{m}"
+            return val
+        # datetime型やその他を pandas でパース
+        try:
+            dt = _pd.to_datetime(val, errors='coerce')
+            if not _pd.isna(dt):
+                return f"{dt.year}/{dt.month:02d}"
+        except Exception:
+            pass
+        return str(val).strip()
+
+    df_hist['配信月'] = df_hist['配信月'].apply(norm_month_to_yyyy_mm)
+    df_hist['支払月'] = df_hist['支払月'].apply(norm_month_to_yyyy_mm)
+    df_hist['支払/繰越'] = df_hist['支払/繰越'].astype(str).str.strip()
+
+    # 履歴は上が最新（想定）か下が最新か不明なので、最新が上に来るよう一意な配信月で先頭保持
+    uniq = df_hist.drop_duplicates(subset=['配信月'], keep='first').reset_index(drop=True)
+
+    # target_payment_month_str（例 '2025/12'）に該当する '支払' の行を探す
+    mask = (uniq['支払月'] == target_payment_month_str) & (uniq['支払/繰越'] == '支払')
+    idxs = uniq.index[mask].tolist()
+    if not idxs:
+        return []
+
+    base_idx = idxs[0]
+    result = []
+    result.append(uniq.loc[base_idx, '配信月'])  # 最新（今回支払対象の配信月）
+
+    # base_idx の次（より古い行）から連続して '繰越' を追加、途中で '支払' が出たら終了
+    i = base_idx + 1
+    while i < len(uniq):
+        kind = str(uniq.loc[i, '支払/繰越']).strip()
+        if kind == '繰越':
+            result.append(uniq.loc[i, '配信月'])
+            i += 1
+            continue
+        else:
+            break
+
+    return result
+
+
+
 def main():
     st.set_page_config(page_title="SHOWROOM 支払明細書作成補助ツール", layout="wide")
     st.markdown(
@@ -740,6 +822,153 @@ def main():
 
                 # 7. 最終的なDataFrameを再結合
                 df_extracted = pd.concat([df_room_sales_only, df_other_sales], ignore_index=True)
+
+
+                # --- 繰越追加処理（ここから） ---
+                # 各ライバーの履歴ファイルを参照して、連続する繰越配信月分を取得し
+                # 同じ単月処理と同等の行を作成して df_extracted に追加する
+
+                # selected_month_label 例: '2025年10月分' -> 支払月 = 選択配信月 + 2ヶ月 -> 'YYYY/MM'
+                sel_label = st.session_state.get('selected_month_label', '')
+                m = re.match(r'(\d{4})年(\d{2})月分', str(sel_label))
+                if m:
+                    sel_year = int(m.group(1)); sel_month = int(m.group(2))
+                else:
+                    sel_year = None; sel_month = None
+
+                if sel_year and sel_month:
+                    # 支払月 = 選択された配信月 + 2ヶ月
+                    pay_year = sel_year
+                    pay_month = sel_month + 2
+                    if pay_month > 12:
+                        pay_month -= 12
+                        pay_year += 1
+                    pay_month_str = f"{pay_year}/{pay_month:02d}"  # 履歴Excelの '支払月' と照合する形式
+
+                    # df_livers は既にロード済み
+                    if 'df_livers' in locals() or 'df_livers' in globals() or 'df_livers' in st.session_state:
+                        df_livers_local = st.session_state.get('df_livers', pd.DataFrame()).copy()
+                        if not df_livers_local.empty:
+                            # 1ライバーずつ処理
+                            for _, liver_row in df_livers_local.iterrows():
+                                file_basename = liver_row.get('ファイル名')
+                                room_id = str(liver_row.get('ルームID', '')).strip()
+                                if not file_basename or pd.isna(file_basename):
+                                    continue
+
+                                try:
+                                    months_list = get_kurikoshi_months_from_excel(str(file_basename), pay_month_str)
+                                except Exception:
+                                    months_list = []
+
+                                # months_list の先頭は今回処理済みの配信月（既に df_extracted に含まれている）
+                                if len(months_list) <= 1:
+                                    continue
+                                months_to_add = months_list[1:]  # 例 ['2025/09','2025/08',...]
+
+                                for mstr in months_to_add:
+                                    # mstr は 'YYYY/MM' 形式
+                                    try:
+                                        y_s, mm_s = mstr.split('/')
+                                        y_i = int(y_s); m_i = int(mm_s)
+                                        # タイムスタンプに変換（fetch_and_process_data が受けるタイムスタンプ）
+                                        dt_naive = datetime(y_i, m_i, 1, 0, 0, 0)
+                                        dt_obj_jst = JST.localize(dt_naive, is_dst=None)
+                                        ts = int(dt_obj_jst.timestamp())
+                                    except Exception:
+                                        continue
+
+                                    # その月に関する SHOWROOM の3種データを取得（既存関数を再利用）
+                                    df_room_month = fetch_and_process_data(ts, AUTH_COOKIE_STRING, SR_ROOM_SALES_URL, "room_sales")
+                                    df_premium_month = fetch_and_process_data(ts, AUTH_COOKIE_STRING, SR_PREMIUM_LIVE_URL, "premium_live")
+                                    df_time_month = fetch_and_process_data(ts, AUTH_COOKIE_STRING, SR_TIME_CHARGE_URL, "time_charge")
+
+                                    # 取得失敗や None の場合はスキップ
+                                    if df_room_month is None or df_premium_month is None or df_time_month is None:
+                                        continue
+
+                                    # MK全体合計は df_room_month の MKsoul 行から取得（既存ロジックに合わせる）
+                                    try:
+                                        mk_total = int(df_room_month[df_room_month['ルームID'] == 'MKsoul']['分配額'].iloc[0])
+                                    except Exception:
+                                        mk_total = 0
+                                    mk_rank_value = get_mk_rank(mk_total)
+
+                                    # 対象ライバーの行だけ抽出
+                                    all_sales_month = pd.concat([df_room_month, df_premium_month, df_time_month], ignore_index=True)
+                                    sel_rows = all_sales_month[all_sales_month['ルームID'] == room_id].copy()
+
+                                    if sel_rows.empty:
+                                        # 売上データなしの行を既存の形式に合わせて作る
+                                        no_row = {
+                                            'ルームID': room_id,
+                                            '分配額': 0,
+                                            'アカウントID': np.nan,
+                                            'データ種別': '売上データなし',
+                                            '配信月': f"{y_i}年{m_i:02d}月分",
+                                            'is_invoice_registered': bool(liver_row.get('is_invoice_registered', False))
+                                        }
+                                        df_add = pd.DataFrame([no_row])
+                                    else:
+                                        sel_rows['配信月'] = f"{y_i}年{m_i:02d}月分"
+                                        sel_rows['is_invoice_registered'] = bool(liver_row.get('is_invoice_registered', False))
+
+                                        # ルーム売上は個別ランク・MKランク・支払額を付与
+                                        df_room_part = sel_rows[sel_rows['データ種別'] == 'ルーム売上'].copy()
+                                        df_other_part = sel_rows[sel_rows['データ種別'] != 'ルーム売上'].copy()
+
+                                        if not df_room_part.empty:
+                                            df_room_part['MKランク'] = mk_rank_value
+                                            df_room_part['個別ランク'] = df_room_part['分配額'].apply(get_individual_rank)
+                                            df_room_part['適用料率'] = np.where(
+                                                df_room_part['ルームID'] == 'MKsoul',
+                                                '-',
+                                                '適用料率：' + df_room_part['MKランク'].astype(str) + df_room_part['個別ランク']
+                                            )
+                                            df_room_part['支払額'] = df_room_part.apply(
+                                                lambda row: calculate_payment_estimate(
+                                                    row['個別ランク'],
+                                                    row['MKランク'],
+                                                    row['分配額'],
+                                                    row['is_invoice_registered']
+                                                ), axis=1
+                                            )
+                                        else:
+                                            df_room_part = pd.DataFrame(columns=sel_rows.columns.tolist() + ['MKランク','個別ランク','適用料率','支払額'])
+
+                                        # その他（プレミアム/タイムチャージ）
+                                        if not df_other_part.empty:
+                                            df_other_part['MKランク'] = '-'
+                                            df_other_part['個別ランク'] = '-'
+                                            df_other_part['適用料率'] = '-'
+                                            mask_pre = df_other_part['データ種別'] == 'プレミアムライブ売上'
+                                            if mask_pre.any():
+                                                df_other_part.loc[mask_pre, '支払額'] = df_other_part[mask_pre].apply(
+                                                    lambda r: calculate_paid_live_payment_estimate(r['分配額'], r.get('is_invoice_registered', False)), axis=1
+                                                )
+                                            mask_time = df_other_part['データ種別'] == 'タイムチャージ売上'
+                                            if mask_time.any():
+                                                df_other_part.loc[mask_time, '支払額'] = df_other_part[mask_time].apply(
+                                                    lambda r: calculate_time_charge_payment_estimate(r['分配額'], r.get('is_invoice_registered', False)), axis=1
+                                                )
+                                        else:
+                                            df_other_part = pd.DataFrame(columns=sel_rows.columns.tolist() + ['MKランク','個別ランク','適用料率','支払額'])
+
+                                        df_add = pd.concat([df_room_part, df_other_part], ignore_index=True)
+
+                                    # 最終形式に沿って列を揃え、支払額の型を整える
+                                    cols_to_keep = [c for c in ['ルームID','ファイル名','インボイス','is_invoice_registered','データ種別','分配額','個別ランク','MKランク','適用料率','支払額','アカウントID','配信月'] if c in df_add.columns]
+                                    df_add = df_add[cols_to_keep]
+                                    if '支払額' in df_add.columns:
+                                        df_add['支払額'] = df_add['支払額'].replace(['#ERROR_CALC','#ERROR_MK','#ERROR_RANK','#N/A'], np.nan)
+                                        df_add['支払額'] = pd.to_numeric(df_add['支払額'], errors='coerce').fillna(0).astype('Int64')
+
+                                    # df_extracted に連結（既存の順序を崩さない）
+                                    df_extracted = pd.concat([df_extracted, df_add], ignore_index=True)
+
+                # --- 繰越追加処理（ここまで） ---
+
+
                 
                 # 8. 不要な列を整理し、抽出が完了したDataFrameを表示 (ランク情報を追加)
                 final_display_cols = ['ルームID']
