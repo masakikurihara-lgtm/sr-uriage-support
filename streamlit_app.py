@@ -600,7 +600,7 @@ def main():
         unsafe_allow_html=True
     )
     st.markdown("<p style='text-align: left;'>⚠️ <b>注意</b>: このツールは、<b>Secretsに設定されたCookieが有効な間のみ</b>動作します。</p>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: left;'>⚠️ <b>注意</b>: <b>処理対象ライバーファイル（ https://mksoul-pro.com/showroom/file/shiharai-taishou.csv ）の内容が適切か確認してください</b></p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: left;'>⚠️ <b>注意</b>: <b>処理対象ライバーファイル（ https://mksoul-pro.com/showroom/file/shiharai-taishou.csv ）の内容が適切か確認してください</b>。</p>", unsafe_allow_html=True)
     st.markdown("---")
     
     # セッションステートの初期化
