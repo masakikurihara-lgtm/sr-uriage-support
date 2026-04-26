@@ -287,16 +287,14 @@ def load_target_livers(url):
         st.error("🚨 処理対象ライバーファイルに必須の列 **'ルームID'** が見つかりません。")
         return pd.DataFrame()
     
-    # ★★★ 決定的な修正: インボイス登録判定ロジックの改善 ★★★
+    # ★★★ 決定的な修正: インボイス登録判定ロジック（エラー回避版） ★★★
     if 'インボイス' in df_livers.columns:
-        # 文字列として取得し、余計な空白を徹底的に除去
-        invoice_raw = df_livers['インボイス'].astype(str).str.strip()
+        # 1. 一旦すべて文字列に変換し、前後の空白を除去
+        s_invoice = df_livers['インボイス'].astype(str).str.strip()
         
-        # 判定: 「Tから始まる13桁の数字」に一致する場合のみ True とする
-        # これにより、空欄('nan')、記号、不適切な文字列はすべて確実に False になります
-        df_livers['is_invoice_registered'] = invoice_raw.apply(
-            lambda x: bool(re.match(r'^T\d{13}$', x))
-        )
+        # 2. Pandasの str.match を使用。Tから始まる13桁の数字に一致するものだけを True、
+        # それ以外（'nan'や空欄、不適切な形式）はすべて False にします。
+        df_livers['is_invoice_registered'] = s_invoice.str.match(r'^T\d{13}$', na=False)
     else:
         st.warning("⚠️ 処理対象ライバーファイルに 'インボイス' 列が見つかりません。")
         df_livers['is_invoice_registered'] = False
