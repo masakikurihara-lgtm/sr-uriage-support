@@ -287,25 +287,18 @@ def load_target_livers(url):
         st.error("🚨 処理対象ライバーファイルに必須の列 **'ルームID'** が見つかりません。")
         return pd.DataFrame()
     
-    # ★★★ 決定的な修正: インボイス登録判定ロジックのバグフィックス ★★★
-    # CSVの空欄（NaN）が文字列化されて 'nan' になり、Trueと誤判定される問題を解消
+    # ★★★ 決定的な修正: インボイス登録判定ロジックの改善 ★★★
     if 'インボイス' in df_livers.columns:
+        # 文字列として取得し、余計な空白を徹底的に除去
+        invoice_raw = df_livers['インボイス'].astype(str).str.strip()
         
-        # 1. 列を文字列化し、前後の空白を除去、小文字に統一
-        s_invoice = df_livers['インボイス'].astype(str).str.strip().str.lower()
-        
-        # 2. 厳格な判定: 以下のいずれかの場合は False (非登録者) とする
-        #    - '' (空白のみのセル由来)
-        #    - 'nan' (CSVのブランクセル由来)
-        #    - 'false', '0', 'none', 'n/a' などの明示的な否定文字列
-        is_registered_series = ~s_invoice.isin(['', 'nan', 'false', '0', 'none', 'n/a'])
-        
-        # 3. 純粋なbool型としてis_invoice_registered列を作成
-        df_livers['is_invoice_registered'] = is_registered_series.astype(bool)
-
+        # 判定: 「Tから始まる13桁の数字」に一致する場合のみ True とする
+        # これにより、空欄('nan')、記号、不適切な文字列はすべて確実に False になります
+        df_livers['is_invoice_registered'] = invoice_raw.apply(
+            lambda x: bool(re.match(r'^T\d{13}$', x))
+        )
     else:
-        # インボイス列がない場合は全てFalseとする
-        st.warning("⚠️ 処理対象ライバーファイルに **'インボイス'** 列が見つかりません。全てのライバーを非登録者として処理します。")
+        st.warning("⚠️ 処理対象ライバーファイルに 'インボイス' 列が見つかりません。")
         df_livers['is_invoice_registered'] = False
     
     st.info(f"インボイス登録者 ({df_livers['is_invoice_registered'].sum()}名) のフラグ付けが完了しました。")
