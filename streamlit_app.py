@@ -120,7 +120,7 @@ def calculate_payment_estimate(individual_rank, mk_rank, individual_revenue, is_
             payment_estimate = (individual_revenue * 1.10 * rate) / 1.10
         else:
             # インボイス非登録者ロジック (既存): (individual_revenue * 1.08 * rate) / 1.10
-            payment_estimate = (individual_revenue * 1.08 * rate) / 1.10
+            payment_estimate = (individual_revenue * 1.07 * rate) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate) 
@@ -152,7 +152,7 @@ def calculate_paid_live_payment_estimate(paid_live_amount, is_invoice_registered
             payment_estimate = (individual_revenue * 1.10 * 0.9) / 1.10
         else:
             # インボイス非登録者ロジック (既存): (individual_revenue * 1.08 * 0.9) / 1.10
-            payment_estimate = (individual_revenue * 1.08 * 0.9) / 1.10
+            payment_estimate = (individual_revenue * 1.07 * 0.9) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate)
@@ -184,7 +184,7 @@ def calculate_time_charge_payment_estimate(time_charge_amount, is_invoice_regist
             payment_estimate = (individual_revenue * 1.10 * 1.00) / 1.10
         else:
             # インボイス非登録者ロジック (既存): (individual_revenue * 1.08 * 1.00) / 1.10
-            payment_estimate = (individual_revenue * 1.08 * 1.00) / 1.10
+            payment_estimate = (individual_revenue * 1.07 * 1.00) / 1.10
         
         # 結果を小数点以下を四捨五入して整数に丸める
         return round(payment_estimate)
@@ -592,6 +592,7 @@ def main():
     )
     st.markdown("<p style='text-align: left;'>⚠️ <b>注意</b>: このツールは、<b>Secretsに設定されたCookieが有効な間のみ</b>動作します。</p>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: left;'>⚠️ <b>注意</b>: <b>処理対象ライバーファイル（ https://mksoul-pro.com/showroom/file/shiharai-taishou.csv ）の内容が適切か確認してください</b>。</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: left;'>⚠️ <b>注意</b>: インボイス制度経過措置第二フェーズ（1.07）用に修正済み。（2026/08配信（2026/10支払）分対応前）</p>", unsafe_allow_html=True)
     st.markdown("---")
     
     # セッションステートの初期化
